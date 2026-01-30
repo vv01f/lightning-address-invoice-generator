@@ -191,7 +191,7 @@ class RecipientLineEdit(QLineEdit):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("LNAddress → BOLT11")
+        self.setWindowTitle("LNAddress to BOLT11")
         self.resize(400, 320)
         self.setMinimumSize(320,250)
 
@@ -233,8 +233,8 @@ class MainWindow(QMainWindow):
         self.edit_comment.setPlaceholderText("Optional Description...")
         self._comment_signal_connected = False
 
-        # Label für verbleibende Zeichen
-        self.lbl_comment_remaining = QLabel("0 Zeichen übrig")  # Initialwert
+        # Label for left characters
+        self.lbl_comment_remaining = QLabel("0 characters left")  # Initialwert
 
         row_comment.addWidget(lbl_comment)
         row_comment.addWidget(self.edit_comment)
@@ -350,10 +350,10 @@ class MainWindow(QMainWindow):
                 self.edit_comment.setText(text[:self.comment_max_len])
                 text = self.edit_comment.text()
             remaining = self.comment_max_len - len(text)
-            self.lbl_comment_remaining.setText(f"{remaining} Zeichen übrig")
+            self.lbl_comment_remaining.setText(f"{remaining} characters left")
         else:
             # fallback
-            self.lbl_comment_remaining.setText("0 Zeichen übrig")
+            self.lbl_comment_remaining.setText("0 characters left")
 
     def on_paste(self):
         cb = QApplication.clipboard()
