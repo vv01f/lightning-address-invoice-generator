@@ -40,6 +40,8 @@ nix profile add ./result # install
 
 #### On other systems with PyInstaller
 
+Untested territory, feedback welcome.
+
 ```
 pip install -r requirements.txt
 pip install pyinstaller
