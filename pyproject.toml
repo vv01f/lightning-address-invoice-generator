@@ -1,0 +1,27 @@
+[project]
+name = "Zap"
+version = "0.1.0"
+description = "Lightning Address to BOLT11 invoice generator on CLI with PySide6 GUI."
+authors = [
+    { name = "Wolf" }, #, url="https://github.com/vv01f/lightning-address-invoice-generator"
+    { name = "Velas Commerce" }, #, url="https://github.com/Velas-Commerce/lightning-address-invoice-generator"
+]
+requires-python = ">=3.10"
+
+dependencies = [
+    "requests",
+    "bech32",
+    "pyside6",
+    "qrcode",
+    "pillow",
+]
+
+[tool.setuptools]
+py-modules = ["lnaddress2invoice", "zap"]
+
+[project.scripts]
+zap = "zap:main"
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"

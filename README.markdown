@@ -11,7 +11,7 @@ It's a cool site for using your Lightning Address.
 ## Usage
 
 You can run the script using Python 3. Make sure you have Python 3 installed on your system.
-For convenience there was added a `shell.nix` and a `myproject.toml` to manage dependencies.
+For convenience there was added a `shell.nix` and a `pyproject.toml` to manage dependencies.
 
 ### GUI Usage
 
@@ -26,6 +26,25 @@ $ ./lnaddress2invoice.py
 ```
 
 Optionally you can use the command line arguments as shown by `$ ./lnaddress2invoice.py --help`
+
+### Install as application
+
+#### On NixOS
+
+```
+nix build
+./result/bin/zap # run
+nix profile add ./result # install
+~/.nix-profile/bin/zap # run, or select from application menu of your desktop environment
+```
+
+#### On other systems with PyInstaller
+
+```
+pip install -r requirements.txt
+pip install pyinstaller
+pyinstaller zap.spec
+```
 
 ## License
 

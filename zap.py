@@ -224,7 +224,7 @@ class MainWindow(QMainWindow):
         row_amount.addWidget(lbl_amount)
         row_amount.addWidget(self.edit_amount)
 
-        # --- Kommentar row ---
+        # --- Comment/Description row ---
         row_comment = QHBoxLayout()
         lbl_comment = QLabel("Description:")
 
@@ -292,7 +292,7 @@ class MainWindow(QMainWindow):
             return
     
         if not LNADDRESS_RE.match(lnaddress):
-            self.lbl_status.setText("LNAddress scheint ungültig, Kommentar-Max-Länge nicht gesetzt.")
+            self.lbl_status.setText("LNAddress maybe invalid, max length for description not set.")
             return
     
         # Disable LNAddress field while fetching
@@ -315,10 +315,10 @@ class MainWindow(QMainWindow):
         if result.get("status") == "ok":
             max_len = result.get("comment_length", 0)
             self.set_comment_max_length(max_len)
-            self.lbl_status.setText(f"Maximale Kommentar-Länge: {max_len} Zeichen.")
+            self.lbl_status.setText(f"Description length limit: {max_len} Characters.")
         else:
             msg = result.get("msg", "Unknown error")
-            self.lbl_status.setText(f"Fehler beim Abrufen der Kommentar-Länge: {msg}")
+            self.lbl_status.setText(f"Error on requesting description length limit: {msg}")
 
     def set_comment_max_length(self, max_len: int):
         """Set maximum allowed comment length and connect live counter."""
