@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QRegularExpressionValidator, QClipboard
 from PySide6.QtCore import QRegularExpression, QObject, Signal, QThread
+import json
 
 # Import the get_bolt11 function from the existing script
 # Make sure lnaddress2invoice.py is in the same directory or in PYTHONPATH
@@ -49,10 +50,11 @@ class ClickCopyLineEdit(QLineEdit):
 class InvoiceWorker(QObject):
     finished = Signal(dict)
 
-    def __init__(self, lnaddress: str, amount: int):
+    def __init__(self, lnaddress: str, amount: int, comment: str = None):
         super().__init__()
         self.lnaddress = lnaddress
         self.amount = amount
+        self.comment = comment
 
     def run(self):
         """Call get_bolt11 and emit result. Runs in another thread."""
@@ -60,13 +62,30 @@ class InvoiceWorker(QObject):
             self.finished.emit({"status": "error", "msg": "Could not import get_bolt11 from lnaddress2invoice.py"})
             return
         try:
-            res = get_bolt11(self.lnaddress, self.amount)
+            res = get_bolt11(self.lnaddress, self.amount, self.comment)
             # Ensure a dict
             if not isinstance(res, dict):
                 res = {"status": "error", "msg": "Unexpected non-dict response from get_bolt11"}
         except Exception as e:
             res = {"status": "error", "msg": str(e)}
         self.finished.emit(res)
+
+
+class RecipientLineEdit(QLineEdit):
+    """
+    Subclass QLineEdit to move focus to Amount field when LNAddress editing is done.
+    """
+    def __init__(self, main_window: MainWindow):
+        super().__init__()
+        self.main_window = main_window
+
+    def focusOutEvent(self, event):
+        # Call the main window handler first
+        self.main_window.on_lnaddress_finished()
+        # Force focus to Amount field
+        self.main_window.edit_amount.setFocus()
+        # Continue with normal focus-out handling
+        super().focusOutEvent(event)
 
 
 class MainWindow(QMainWindow):
@@ -83,7 +102,9 @@ class MainWindow(QMainWindow):
         # Recipient row
         row_recipient = QHBoxLayout()
         lbl_recipient = QLabel("Recipient (lnaddress):")
-        self.edit_recipient = QLineEdit()
+        # ~ self.edit_recipient = QLineEdit()
+        # ~ self.edit_recipient.editingFinished.connect(self.on_lnaddress_finished)
+        self.edit_recipient = RecipientLineEdit(self)
         self.edit_recipient.setPlaceholderText("user@example.com")
         btn_paste = QPushButton("Paste"
         )
@@ -101,6 +122,21 @@ class MainWindow(QMainWindow):
         self.edit_amount.setPlaceholderText("e.g. 1000")
         row_amount.addWidget(lbl_amount)
         row_amount.addWidget(self.edit_amount)
+
+        # --- Kommentar row ---
+        row_comment = QHBoxLayout()
+        lbl_comment = QLabel("Kommentar:")
+
+        # Textfeld für Kommentar
+        self.edit_comment = QLineEdit()
+        self.edit_comment.setPlaceholderText("Optionaler Kommentar...")
+
+        # Label für verbleibende Zeichen
+        self.lbl_comment_remaining = QLabel("0 Zeichen übrig")  # Initialwert
+
+        row_comment.addWidget(lbl_comment)
+        row_comment.addWidget(self.edit_comment)
+        row_comment.addWidget(self.lbl_comment_remaining)
 
         # Generate button
         self.btn_generate = QPushButton("Generate Invoice")
@@ -125,6 +161,7 @@ class MainWindow(QMainWindow):
 
         layout.addLayout(row_recipient)
         layout.addLayout(row_amount)
+        layout.addLayout(row_comment)
         layout.addWidget(self.btn_generate)
         layout.addLayout(row_invoice)
         layout.addWidget(self.lbl_status)
@@ -134,6 +171,55 @@ class MainWindow(QMainWindow):
         # Thread placeholders
         self._thread: Optional[QThread] = None
         self._worker: Optional[InvoiceWorker] = None
+
+    def on_lnaddress_finished(self):
+        """
+        Wird aufgerufen, wenn der Nutzer das LN-Address-Feld verlässt.
+        Ruft die PayURL ab und liest die maximale Kommentar-Länge aus.
+        """
+        lnaddress = self.edit_recipient.text().strip()
+        if not lnaddress:
+            return  # leer, nichts tun
+
+        # Optional: nur wenn es wie eine lnaddress aussieht
+        if not LNADDRESS_RE.match(lnaddress):
+            self.lbl_status.setText("LNAddress scheint ungültig, Kommentar-Max-Länge nicht gesetzt.")
+            return
+
+        try:
+            # PayURL abrufen
+            from lnaddress2invoice import get_payurl, get_url, get_comment_length
+            purl = get_payurl(lnaddress)
+            json_content = get_url(purl, headers={}).strip()
+            datablock = json.loads(json_content)
+            comment_allowed = get_comment_length(datablock)
+
+            # Setze max Länge im GUI
+            self.set_comment_max_length(comment_allowed)
+            self.lbl_status.setText(f"Maximale Kommentar-Länge: {comment_allowed} Zeichen.")
+
+        except Exception as e:
+            self.lbl_status.setText(f"Fehler beim Abrufen der Kommentar-Länge: {str(e)}")
+
+    def set_comment_max_length(self, max_len: int):
+        """Set maximum allowed comment length and connect live counter."""
+        self.comment_max_len = max_len
+        self.edit_comment.textChanged.connect(self.update_comment_remaining)
+        self.update_comment_remaining()  # initial update
+
+    def update_comment_remaining(self):
+        """Update remaining characters label and truncate if necessary."""
+        text = self.edit_comment.text()
+        if hasattr(self, "comment_max_len"):
+            if len(text) > self.comment_max_len:
+                # automatisch kürzen
+                self.edit_comment.setText(text[:self.comment_max_len])
+                text = self.edit_comment.text()
+            remaining = self.comment_max_len - len(text)
+            self.lbl_comment_remaining.setText(f"{remaining} Zeichen übrig")
+        else:
+            # fallback
+            self.lbl_comment_remaining.setText("0 Zeichen übrig")
 
     def on_paste(self):
         cb = QApplication.clipboard()
@@ -176,6 +262,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Invalid amount", "Amount must be a non-negative integer (satoshis).")
             return
 
+        comment = self.edit_comment.text().strip() or None
+
         # Disable UI while working
         self.btn_generate.setEnabled(False)
         self.lbl_status.setText("Generating invoice...")
@@ -183,7 +271,7 @@ class MainWindow(QMainWindow):
 
         # Create worker and thread
         self._thread = QThread()
-        self._worker = InvoiceWorker(lnaddress, amount)
+        self._worker = InvoiceWorker(lnaddress, amount, comment)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.finished.connect(self.on_worker_finished)
@@ -197,6 +285,8 @@ class MainWindow(QMainWindow):
         if result.get("status") == "ok":
             bolt11 = result.get("bolt11")
             self.edit_invoice.setText(bolt11)
+            self.edit_invoice.selectAll()  # select the text
+            self.edit_invoice.setFocus()   # optional: move focus
             self.lbl_status.setText("Invoice generated successfully. Double-click or press Copy to copy to clipboard.")
         else:
             msg = result.get("msg", "Unknown error")

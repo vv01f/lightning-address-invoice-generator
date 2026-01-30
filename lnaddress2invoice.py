@@ -7,33 +7,46 @@ import sys
 import re
 import urllib
 from datetime import datetime
+import bech32
 
 def get_payurl(lnaddress):
-    try:
-        parts = lnaddress.split('@')
-        domain = parts[1]
-        username = parts[0]
-        transform_url = "https://" + domain + "/.well-known/lnurlp/" + username
-        logging.info("Transformed URL:" + transform_url)
-        return transform_url
-    except Exception as e:
-        logging.error("Exception, possibly malformed LN Address: " + str(e))
-        return {'status' : 'error', 'msg' : 'Possibly a malformed LN Address'}
+    parts = lnaddress.split('@')
+    if len(parts) != 2:
+        raise ValueError(f"Errorm possibly malformed LN Address: {lnaddress}")
+    domain = parts[1]
+    username = parts[0]
+    transform_url = "https://" + domain + "/.well-known/lnurlp/" + username
+    logging.info("Transformed URL:" + transform_url)
+    return transform_url
 
 def get_url(path, headers):
     response = requests.get(path, headers=headers)
     return response.text
 
+def get_comment_length(datablock: dict) -> int:
+    """
+    Prüft, die zulässige Länge eines Kommentars für eine Invoice.
+
+    Args:
+        datablock (dict): Ein Dictionary, das die Bolt11/Invoice-Daten enthält.
+                          Erwartet ggf. den Schlüssel 'commentAllowed'.
+
+    Returns:
+        int: 0, wenn commentAllowed nicht gesetzt, sonst Maximallänge.
+    """
+    # Robust prüfen: Wenn 'commentAllowed' nicht existiert, False zurückgeben
+    return int(datablock.get("commentAllowed", 0))
+
 def get_bolt11(lnaddress, amount=None, comment=None):
     try:
         purl = get_payurl(lnaddress)
-        json_content = get_url(path=purl, headers={})
+        json_content = get_url(path=purl, headers={}).strip()
         datablock = json.loads(json_content)
 
         lnurlpay = datablock["callback"]
         min_amount = int(datablock["minSendable"])
         max_amount = int(datablock["maxSendable"])
-        comment_allowed = int(datablock["commentAllowed"])
+        comment_allowed = int(get_comment_length(datablock))
 
         logging.info("min. amount: " + str(min_amount))
         logging.info("max. amount: " + str(max_amount))
@@ -51,11 +64,17 @@ def get_bolt11(lnaddress, amount=None, comment=None):
                     "status": "error",
                     "msg": f"Amount too big, must be in range {min_amount // 1000} and {max_amount // 1000} sat"
                 }
+        else:
+            amount_msat = None
 
         logging.info("amount: " + str(amount))
 
         # Start building the query
-        query_params = {"amount": str(amount_msat)}
+        query_params = {}
+
+        # Omit amount when None
+        if amount_msat is not None:
+            query_params["amount"] = str(amount_msat)
 
         # If comment is allowed, truncate if necessary and add to query
         if comment_allowed > 0 and comment:
@@ -146,7 +165,7 @@ def parse_tags(words):
                 tags['payment_hash'] = words_to_bytes(data_words).hex()
             case 'd': # Human-readable description (optional)
                 tags['description'] = words_to_bytes(data_words).decode('utf-8', errors='ignore')
-            # ~ case 'h': # SHA256 hash of description (instead of d)				
+            # ~ case 'h': # SHA256 hash of description (instead of d)
             case 'x': # Expiry in seconds
                 tags['expiry'] = from_words(data_words)
             # ~ case 'c': # Final CLTV delta
@@ -194,6 +213,7 @@ def main():
     parser = argparse.ArgumentParser(description="Send a Lightning payment.")
     parser.add_argument("-r", "--lnaddress", help="Lightning Address")
     parser.add_argument("-a", "--amount", type=int, help="Desired amount (integer)")
+    parser.add_argument("-c", "--comment", type=str, help="Optional comment to include in the invoice")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable logging")
     parser.add_argument("-f", "--logfile", type=str, help="Write log to a specified file")
     # ~ parser.add_argument("-d", "--decode", action="store_true", help="Decode and display the BOLT11 invoice")
@@ -234,7 +254,14 @@ def main():
             else:
                 print("Amount must be a non-negative integer.")
 
-    result = get_bolt11(lnaddress, amount)
+    # Optional comment: use CLI argument or prompt user
+    comment = args.comment
+    if comment is None:
+        comment = input("Enter a comment (optional, max length enforced by receiver, press Enter to skip): ").strip()
+        if comment == "":
+            comment = None
+
+    result = get_bolt11(lnaddress, amount, comment)
     if result.get("status") == "ok":
         bolt11 = result["bolt11"]
         # ~ print(f"Generated BOLT11: ")
