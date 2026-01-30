@@ -34,8 +34,9 @@ let
     exec = "zap";
     icon = "zap.github.vv01f";
   };
-in
-python3Packages.buildPythonApplication rec {
+  
+  pkgs = python3Packages;
+in pkgs.buildPythonApplication rec {
   pname = "zap";
   version = "0.1.0";
 
@@ -43,7 +44,7 @@ python3Packages.buildPythonApplication rec {
 
   pyproject = true;
 
-  nativeBuildInputs = with python3Packages; [
+  nativeBuildInputs = with pkgs; [
     setuptools
     wheel
   ];
@@ -87,7 +88,7 @@ python3Packages.buildPythonApplication rec {
     esac
   '';
 
-  propagatedBuildInputs = with python3Packages; [
+  propagatedBuildInputs = with pkgs; [
     requests
     bech32
     pyside6
@@ -107,7 +108,7 @@ python3Packages.buildPythonApplication rec {
     bugReports = "https://github.com/vv01f/lightning-address-invoice-generator/issues";
     license = lib.licenses.mit;
     mainProgram = "zap";
-    platforms = lib.platforms.unix; # not tested: windows for lib.platforms.all
+    platforms = lib.platforms.linux ++ lib.platforms.darwin; # not tested: windows for lib.platforms.all
     maintainers = with lib.maintainers; [ "vv01f" ];
   };
 }
