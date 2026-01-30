@@ -42,6 +42,25 @@ except Exception as e:
 LNADDRESS_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
+class LNURLWorker(QObject):
+    finished = Signal(dict)
+
+    def __init__(self, lnaddress: str):
+        super().__init__()
+        self.lnaddress = lnaddress
+
+    def run(self):
+        from lnaddress2invoice import get_payurl, get_url, get_comment_length
+        try:
+            purl = get_payurl(self.lnaddress)
+            json_content = get_url(purl, headers={}).strip()
+            datablock = json.loads(json_content)
+            comment_allowed = get_comment_length(datablock)
+            self.finished.emit({"status": "ok", "comment_length": comment_allowed})
+        except Exception as e:
+            self.finished.emit({"status": "error", "msg": str(e)})
+
+
 class ScalableQRCodeLabel(QLabel):
     """
     QLabel that shows a QR code pixmap.
@@ -267,33 +286,39 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText(msg)
 
     def on_lnaddress_finished(self):
-        """
-        Wird aufgerufen, wenn der Nutzer das LN-Address-Feld verlässt.
-        Ruft die PayURL ab und liest die maximale Kommentar-Länge aus.
-        """
         lnaddress = self.edit_recipient.text().strip()
         if not lnaddress:
-            return  # leer, nichts tun
-
-        # Optional: nur wenn es wie eine lnaddress aussieht
+            return
+    
         if not LNADDRESS_RE.match(lnaddress):
             self.lbl_status.setText("LNAddress scheint ungültig, Kommentar-Max-Länge nicht gesetzt.")
             return
+    
+        # Disable LNAddress field while fetching
+        self.edit_recipient.setEnabled(False)
+        self.lbl_status.setText("Fetching LNURL info...")
+    
+        self._lnurl_thread = QThread()
+        self._lnurl_worker = LNURLWorker(lnaddress)
+        self._lnurl_worker.moveToThread(self._lnurl_thread)
+        self._lnurl_thread.started.connect(self._lnurl_worker.run)
+        self._lnurl_worker.finished.connect(self.on_lnurl_finished)
+        self._lnurl_worker.finished.connect(self._lnurl_thread.quit)
+        self._lnurl_worker.finished.connect(self._lnurl_worker.deleteLater)
+        self._lnurl_thread.finished.connect(self._lnurl_thread.deleteLater)
+        self._lnurl_thread.start()
 
-        try:
-            # PayURL abrufen
-            from lnaddress2invoice import get_payurl, get_url, get_comment_length
-            purl = get_payurl(lnaddress)
-            json_content = get_url(purl, headers={}).strip()
-            datablock = json.loads(json_content)
-            comment_allowed = get_comment_length(datablock)
 
-            # Setze max Länge im GUI
-            self.set_comment_max_length(comment_allowed)
-            self.lbl_status.setText(f"Maximale Kommentar-Länge: {comment_allowed} Zeichen.")
+    def on_lnurl_finished(self, result: dict):
+        self.edit_recipient.setEnabled(True)
+        if result.get("status") == "ok":
+            max_len = result.get("comment_length", 0)
+            self.set_comment_max_length(max_len)
+            self.lbl_status.setText(f"Maximale Kommentar-Länge: {max_len} Zeichen.")
+        else:
+            msg = result.get("msg", "Unknown error")
+            self.lbl_status.setText(f"Fehler beim Abrufen der Kommentar-Länge: {msg}")
 
-        except Exception as e:
-            self.lbl_status.setText(f"Fehler beim Abrufen der Kommentar-Länge: {str(e)}")
 
     def set_comment_max_length(self, max_len: int):
         """Set maximum allowed comment length and connect live counter."""
