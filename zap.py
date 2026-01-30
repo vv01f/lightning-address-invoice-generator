@@ -24,9 +24,13 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QMainWindow, QLabel, QLineEdit, QPushButton,
     QHBoxLayout, QVBoxLayout, QMessageBox, QSizePolicy
 )
-from PySide6.QtGui import QRegularExpressionValidator, QClipboard
-from PySide6.QtCore import QRegularExpression, QObject, Signal, QThread
+from PySide6.QtGui import QRegularExpressionValidator, QClipboard, QPixmap, QMouseEvent, Qt
+from PySide6.QtCore import QRegularExpression, QObject, Signal, QThread, QPoint
 import json
+
+import qrcode
+from qrcode.image.pil import PilImage  # important!
+from PIL.ImageQt import ImageQt
 
 # Import the get_bolt11 function from the existing script
 # Make sure lnaddress2invoice.py is in the same directory or in PYTHONPATH
@@ -36,6 +40,83 @@ except Exception as e:
     get_bolt11 = None
 
 LNADDRESS_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class ScalableQRCodeLabel(QLabel):
+    """
+    QLabel that shows a QR code pixmap.
+    - Pixmap scales to label size
+    - Mouse wheel scales the QR code
+    - Double-click copies pixmap to clipboard
+    """
+    def __init__(self, parent=None, status_callback=None):
+        super().__init__(parent)
+        self.setAlignment(Qt.AlignCenter)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # Remove fixed size
+        # self.setFixedSize(150, 150)
+        self._pixmap_orig: QPixmap | None = None
+        self._scale = 1.0
+        self.status_callback = status_callback
+
+    def setPixmap(self, pixmap: QPixmap):
+        """Store original pixmap and apply current scale."""
+        self._pixmap_orig = pixmap
+        self._scale = 1.0
+        self._update_pixmap()
+
+    def _update_pixmap(self):
+        if self._pixmap_orig:
+            w = int(self.width() * self._scale)
+            h = int(self.height() * self._scale)
+            scaled = self._pixmap_orig.scaled(
+                w,
+                h,
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            )
+            super().setPixmap(scaled)
+
+    def resizeEvent(self, event):
+        self._update_pixmap()
+        super().resizeEvent(event)
+
+    # ~ def wheelEvent(self, event):
+        # ~ if self._pixmap_orig:
+            # ~ delta = event.angleDelta().y()
+            # ~ factor = 1.1 if delta > 0 else 0.9
+            # ~ self._scale *= factor
+            # ~ self._scale = max(0.1, min(self._scale, 5.0))
+            # ~ self._update_pixmap()
+
+    def mouseDoubleClickEvent(self, event):
+        if self.pixmap():
+            QApplication.clipboard().setPixmap(self.pixmap())
+            if self.status_callback:
+                self.status_callback("QR copied to clipboard.")
+
+
+def generate_invoice_qr(invoice_text: str) -> QPixmap:
+    """
+    Generate a QR code from a BOLT11 invoice and return a QPixmap to display in PySide6.
+    """
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(invoice_text)
+    qr.make(fit=True)
+
+    # generate a PIL image (not BaseImage)
+    img: PilImage = qr.make_image(fill_color="black", back_color="white", image_factory=PilImage)
+    pil_image = img.get_image()  # PilImage wrapper -> actual PIL.Image.Image
+
+    qt_image = ImageQt(pil_image)  # now it works
+    pixmap = QPixmap.fromImage(qt_image)
+    return pixmap
+
 
 class ClickCopyLineEdit(QLineEdit):
     """Read-only QLineEdit that copies its contents to the clipboard on double-click."""
@@ -92,7 +173,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("LNAddress → BOLT11")
-        self.resize(680, 160)
+        self.resize(400, 320)
+        self.setMinimumSize(320,250)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -125,7 +207,7 @@ class MainWindow(QMainWindow):
 
         # --- Kommentar row ---
         row_comment = QHBoxLayout()
-        lbl_comment = QLabel("Kommentar:")
+        lbl_comment = QLabel("Description:")
 
         # Textfeld für Kommentar
         self.edit_comment = QLineEdit()
@@ -156,6 +238,14 @@ class MainWindow(QMainWindow):
         row_invoice.addWidget(self.edit_invoice)
         row_invoice.addWidget(btn_copy)
 
+        # QR code
+        self.lbl_qr = ScalableQRCodeLabel(status_callback=self.update_status)
+        self.qr_container = QWidget()
+        qr_layout = QVBoxLayout(self.qr_container)
+        qr_layout.setContentsMargins(0, 0, 0, 0)
+        qr_layout.addWidget(self.lbl_qr)
+        self.qr_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
         # Status label
         self.lbl_status = QLabel("")
 
@@ -164,6 +254,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(row_comment)
         layout.addWidget(self.btn_generate)
         layout.addLayout(row_invoice)
+        layout.addWidget(self.qr_container)
         layout.addWidget(self.lbl_status)
 
         central.setLayout(layout)
@@ -171,6 +262,9 @@ class MainWindow(QMainWindow):
         # Thread placeholders
         self._thread: Optional[QThread] = None
         self._worker: Optional[InvoiceWorker] = None
+
+    def update_status(self, msg: str):
+        self.lbl_status.setText(msg)
 
     def on_lnaddress_finished(self):
         """
@@ -282,15 +376,23 @@ class MainWindow(QMainWindow):
 
     def on_worker_finished(self, result: dict):
         self.btn_generate.setEnabled(True)
+
         if result.get("status") == "ok":
             bolt11 = result.get("bolt11")
             self.edit_invoice.setText(bolt11)
             self.edit_invoice.selectAll()  # select the text
             self.edit_invoice.setFocus()   # optional: move focus
             self.lbl_status.setText("Invoice generated successfully. Double-click or press Copy to copy to clipboard.")
+            # Generate QR code
+            # QR generieren
+            pixmap = generate_invoice_qr(bolt11)
+            # Pixmap auf Label setzen, Label passt sich an
+            self.lbl_qr.setPixmap(pixmap)
+            self.lbl_status.setText("Invoice and QR generated successfully. Double-click to copy to clipboard.")
         else:
             msg = result.get("msg", "Unknown error")
             self.lbl_status.setText(f"Error: {msg}")
+            self.lbl_qr.clear()  # QR leeren, falls vorher erzeugt
             QMessageBox.critical(self, "Error", str(msg))
 
     def on_copy_invoice(self):

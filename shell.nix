@@ -5,5 +5,7 @@ with import <nixpkgs> { };
     requests
     bech32 # maybe bech32-py or python-bech32
     pyside6
+    qrcode
+    pillow
   ]
 )).env
