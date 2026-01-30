@@ -6,12 +6,19 @@
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        zapPkg = pkgs.callPackage ./package.nix {};
-      in {
+        zapPkg = pkgs.callPackage ./package.nix { };
+      in
+      {
         packages = {
           zap = zapPkg;
           default = zapPkg;
@@ -29,7 +36,9 @@
             python3Packages.requests
             python3Packages.qrcode
             python3Packages.pillow
+            python3Packages.bech32
           ];
         };
-      });
+      }
+    );
 }
