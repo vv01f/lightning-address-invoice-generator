@@ -228,9 +228,10 @@ class MainWindow(QMainWindow):
         row_comment = QHBoxLayout()
         lbl_comment = QLabel("Description:")
 
-        # Textfeld für Kommentar
+        # Textfield for description
         self.edit_comment = QLineEdit()
-        self.edit_comment.setPlaceholderText("Optionaler Kommentar...")
+        self.edit_comment.setPlaceholderText("Optional Description...")
+        self._comment_signal_connected = False
 
         # Label für verbleibende Zeichen
         self.lbl_comment_remaining = QLabel("0 Zeichen übrig")  # Initialwert
@@ -319,12 +320,26 @@ class MainWindow(QMainWindow):
             msg = result.get("msg", "Unknown error")
             self.lbl_status.setText(f"Fehler beim Abrufen der Kommentar-Länge: {msg}")
 
-
     def set_comment_max_length(self, max_len: int):
         """Set maximum allowed comment length and connect live counter."""
         self.comment_max_len = max_len
-        self.edit_comment.textChanged.connect(self.update_comment_remaining)
-        self.update_comment_remaining()  # initial update
+    
+        # nur disconnecten, wenn wirklich verbunden
+        if self._comment_signal_connected:
+            self.edit_comment.textChanged.disconnect(self.update_comment_remaining)
+            self._comment_signal_connected = False
+    
+        if max_len == 0:
+            self.edit_comment.clear()
+            self.edit_comment.setEnabled(False)
+            self.edit_comment.setPlaceholderText("Description disallowed...")
+            self.lbl_comment_remaining.setText("Zero")
+        else:
+            self.edit_comment.setEnabled(True)
+            self.edit_comment.setPlaceholderText("Optional Description...")
+            self.edit_comment.textChanged.connect(self.update_comment_remaining)
+            self._comment_signal_connected = True
+            self.update_comment_remaining()
 
     def update_comment_remaining(self):
         """Update remaining characters label and truncate if necessary."""
