@@ -9,6 +9,7 @@ import urllib
 from datetime import datetime
 import bech32
 
+
 def get_payurl(lnaddress):
     parts = lnaddress.split('@')
     if len(parts) != 2:
@@ -19,9 +20,11 @@ def get_payurl(lnaddress):
     logging.info("Transformed URL:" + transform_url)
     return transform_url
 
+
 def get_url(path, headers):
     response = requests.get(path, headers=headers)
     return response.text
+
 
 def get_comment_length(datablock: dict) -> int:
     """
@@ -36,6 +39,7 @@ def get_comment_length(datablock: dict) -> int:
     """
     # Robust prüfen: Wenn 'commentAllowed' nicht existiert, False zurückgeben
     return int(datablock.get("commentAllowed", 0))
+
 
 def get_bolt11(lnaddress, amount=None, comment=None):
     try:
@@ -79,7 +83,8 @@ def get_bolt11(lnaddress, amount=None, comment=None):
         # If comment is allowed, truncate if necessary and add to query
         if comment_allowed > 0 and comment:
             if len(comment) > comment_allowed:
-                logging.info(f"Comment truncated to {comment_allowed} characters")
+                logging.info(
+                    f"Comment truncated to {comment_allowed} characters")
                 comment = comment[:comment_allowed]
             query_params["comment"] = comment
 
@@ -106,6 +111,7 @@ def get_bolt11(lnaddress, amount=None, comment=None):
         # ~ logging.error("in get bolt11 : "  + str(e))
         # ~ return {'status': 'error', 'msg': 'Cannot make a Bolt11, are you sure the address `' + str(lnaddress) + '` is valid and the amount withing the allowed range [' + str(min_amount // 1000) + '; ' + str(max_amount // 1000) + '] Satoshi?'}
 
+
 def parse_positional_args(argv):
     lnaddress = None
     amount = None
@@ -121,6 +127,8 @@ def parse_positional_args(argv):
     return lnaddress, amount
 
 # Helper: 5-bit group to integer
+
+
 def from_words(words):
     value = 0
     for w in words:
@@ -128,6 +136,8 @@ def from_words(words):
     return value
 
 # Helper: 5-bit group to bytes
+
+
 def words_to_bytes(words):
     bits = 0
     bit_buf = 0
@@ -139,6 +149,7 @@ def words_to_bytes(words):
             bits -= 8
             output.append((bit_buf >> bits) & 0xFF)
     return bytes(output)
+
 
 def parse_tags(words):
     tags = {}
@@ -158,29 +169,32 @@ def parse_tags(words):
         data_words = words[data_start:data_end]
 
         # Debugging output to track what is being parsed
-        print(f"🔍 Found tag: {tag_char} with {data_length} words: {data_words}")
+        print(
+            f"🔍 Found tag: {tag_char} with {data_length} words: {data_words}")
 
         match tag_char:
-            case 'p': # Preimage hash (mandatory)
+            case 'p':  # Preimage hash (mandatory)
                 tags['payment_hash'] = words_to_bytes(data_words).hex()
-            case 'd': # Human-readable description (optional)
-                tags['description'] = words_to_bytes(data_words).decode('utf-8', errors='ignore')
+            case 'd':  # Human-readable description (optional)
+                tags['description'] = words_to_bytes(
+                    data_words).decode('utf-8', errors='ignore')
             # ~ case 'h': # SHA256 hash of description (instead of d)
-            case 'x': # Expiry in seconds
+            case 'x':  # Expiry in seconds
                 tags['expiry'] = from_words(data_words)
             # ~ case 'c': # Final CLTV delta
-            case 'n': # Node ID
+            case 'n':  # Node ID
                 tags['payee_pubkey'] = words_to_bytes(data_words).hex()
-            case 'f': # On-chain fallback address
+            case 'f':  # On-chain fallback address
                 tags['fallback_address'] = words_to_bytes(data_words).hex()
-            case 'r': # Routing hints (list of hops)
+            case 'r':  # Routing hints (list of hops)
                 tags['routing_hints'] = [words_to_bytes(data_words).hex()]
             # ~ case 'm': # Feature bits
-            case _: # Debugging
+            case _:  # Debugging
                 tags[f'unknown_{tag_char}'] = data_words
 
         i = data_end
     return tags
+
 
 def decode_bolt11(invoice):
     hrp, data = bech32.bech32_decode(invoice.lower())
@@ -209,13 +223,18 @@ def decode_bolt11(invoice):
         print(f"- Routing Hints: {tags['routing_hints']}")
     print()
 
+
 def main():
     parser = argparse.ArgumentParser(description="Send a Lightning payment.")
     parser.add_argument("-r", "--lnaddress", help="Lightning Address")
-    parser.add_argument("-a", "--amount", type=int, help="Desired amount (integer)")
-    parser.add_argument("-c", "--comment", type=str, help="Optional comment to include in the invoice")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Enable logging")
-    parser.add_argument("-f", "--logfile", type=str, help="Write log to a specified file")
+    parser.add_argument("-a", "--amount", type=int,
+                        help="Desired amount (integer)")
+    parser.add_argument("-c", "--comment", type=str,
+                        help="Optional comment to include in the invoice")
+    parser.add_argument("-v", "--verbose",
+                        action="store_true", help="Enable logging")
+    parser.add_argument("-f", "--logfile", type=str,
+                        help="Write log to a specified file")
     # ~ parser.add_argument("-d", "--decode", action="store_true", help="Decode and display the BOLT11 invoice")
 
     # Try to detect lnaddress and amount from positional args
@@ -241,7 +260,8 @@ def main():
         logging.disable(logging.CRITICAL)
 
     # Access parsed arguments safely
-    lnaddress = args.lnaddress or detected_lnaddress or input("Enter your Lightning Address: ")
+    lnaddress = args.lnaddress or detected_lnaddress or input(
+        "Enter your Lightning Address: ")
 
     amount = args.amount or detected_amount
     # Prompt for amount only if still missing
@@ -257,7 +277,8 @@ def main():
     # Optional comment: use CLI argument or prompt user
     comment = args.comment
     if comment is None:
-        comment = input("Enter a comment (optional, max length enforced by receiver, press Enter to skip): ").strip()
+        comment = input(
+            "Enter a comment (optional, max length enforced by receiver, press Enter to skip): ").strip()
         if comment == "":
             comment = None
 
@@ -268,6 +289,7 @@ def main():
         print(f"{bolt11}")
     else:
         print(f"Error: {result.get('msg')}")
+
 
 if __name__ == "__main__":
     main()

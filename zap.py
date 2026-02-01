@@ -2,7 +2,10 @@
 """
 PySide6 GUI wrapper for lnaddress2invoice.py
 
-Place this file next to your existing `lnaddress2invoice.py` (the script you supplied).
+Place this file next to your existing
+    `lnaddress2invoice.py`
+    (the script you supplied).
+
 Run with: python lnaddress2invoice_gui.py
 
 This GUI provides:
@@ -10,10 +13,10 @@ This GUI provides:
  - Amount (integer, sats) input
  - Paste button: pastes clipboard if it *looks like* an lnaddress
  - Generate button: calls get_bolt11(lnaddress, amount) in a background thread
- - Read-only invoice field with Copy button. Double-clicking the invoice field also copies it.
+ - Read-only invoice field with Copy button. Double-clicking the invoice field
+   also copies it.
  - Status line for errors / progress
-
-Requires: PySide6, requests (already used by the script)
+ - Extends UX by applying a QR-Code for the Invoice to be scannable
 """
 
 from __future__ import annotations
@@ -24,8 +27,12 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QMainWindow, QLabel, QLineEdit, QPushButton,
     QHBoxLayout, QVBoxLayout, QMessageBox, QSizePolicy
 )
-from PySide6.QtGui import QRegularExpressionValidator, QClipboard, QPixmap, QMouseEvent, Qt
-from PySide6.QtCore import QRegularExpression, QObject, Signal, QThread, QPoint
+from PySide6.QtGui import ( QRegularExpressionValidator, QClipboard,
+     QPixmap, QMouseEvent, Qt
+)
+from PySide6.QtCore import ( QRegularExpression, QObject, Signal,
+     QThread, QPoint
+)
 import json
 
 import qrcode
@@ -56,7 +63,8 @@ class LNURLWorker(QObject):
             json_content = get_url(purl, headers={}).strip()
             datablock = json.loads(json_content)
             comment_allowed = get_comment_length(datablock)
-            self.finished.emit({"status": "ok", "comment_length": comment_allowed})
+            self.finished.emit(
+                {"status": "ok", "comment_length": comment_allowed})
         except Exception as e:
             self.finished.emit({"status": "error", "msg": str(e)})
 
@@ -68,6 +76,7 @@ class ScalableQRCodeLabel(QLabel):
     - Mouse wheel scales the QR code
     - Double-click copies pixmap to clipboard
     """
+
     def __init__(self, parent=None, status_callback=None):
         super().__init__(parent)
         self.setAlignment(Qt.AlignCenter)
@@ -102,11 +111,11 @@ class ScalableQRCodeLabel(QLabel):
 
     # ~ def wheelEvent(self, event):
         # ~ if self._pixmap_orig:
-            # ~ delta = event.angleDelta().y()
-            # ~ factor = 1.1 if delta > 0 else 0.9
-            # ~ self._scale *= factor
-            # ~ self._scale = max(0.1, min(self._scale, 5.0))
-            # ~ self._update_pixmap()
+        # ~ delta = event.angleDelta().y()
+        # ~ factor = 1.1 if delta > 0 else 0.9
+        # ~ self._scale *= factor
+        # ~ self._scale = max(0.1, min(self._scale, 5.0))
+        # ~ self._update_pixmap()
 
     def mouseDoubleClickEvent(self, event):
         if self.pixmap():
@@ -129,7 +138,8 @@ def generate_invoice_qr(invoice_text: str) -> QPixmap:
     qr.make(fit=True)
 
     # generate a PIL image (not BaseImage)
-    img: PilImage = qr.make_image(fill_color="black", back_color="white", image_factory=PilImage)
+    img: PilImage = qr.make_image(
+        fill_color="black", back_color="white", image_factory=PilImage)
     pil_image = img.get_image()  # PilImage wrapper -> actual PIL.Image.Image
 
     qt_image = ImageQt(pil_image)  # now it works
@@ -139,6 +149,7 @@ def generate_invoice_qr(invoice_text: str) -> QPixmap:
 
 class ClickCopyLineEdit(QLineEdit):
     """Read-only QLineEdit that copies its contents to the clipboard on double-click."""
+
     def mouseDoubleClickEvent(self, ev):
         text = self.text()
         if text:
@@ -159,13 +170,15 @@ class InvoiceWorker(QObject):
     def run(self):
         """Call get_bolt11 and emit result. Runs in another thread."""
         if get_bolt11 is None:
-            self.finished.emit({"status": "error", "msg": "Could not import get_bolt11 from lnaddress2invoice.py"})
+            self.finished.emit(
+                {"status": "error", "msg": "Could not import get_bolt11 from lnaddress2invoice.py"})
             return
         try:
             res = get_bolt11(self.lnaddress, self.amount, self.comment)
             # Ensure a dict
             if not isinstance(res, dict):
-                res = {"status": "error", "msg": "Unexpected non-dict response from get_bolt11"}
+                res = {"status": "error",
+                       "msg": "Unexpected non-dict response from get_bolt11"}
         except Exception as e:
             res = {"status": "error", "msg": str(e)}
         self.finished.emit(res)
@@ -175,6 +188,7 @@ class RecipientLineEdit(QLineEdit):
     """
     Subclass QLineEdit to move focus to Amount field when LNAddress editing is done.
     """
+
     def __init__(self, main_window: MainWindow):
         super().__init__()
         self.main_window = main_window
@@ -193,7 +207,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("LNAddress to BOLT11")
         self.resize(400, 320)
-        self.setMinimumSize(320,250)
+        self.setMinimumSize(320, 250)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -208,7 +222,7 @@ class MainWindow(QMainWindow):
         self.edit_recipient = RecipientLineEdit(self)
         self.edit_recipient.setPlaceholderText("user@example.com")
         btn_paste = QPushButton("Paste"
-        )
+                                )
         btn_paste.clicked.connect(self.on_paste)
 
         row_recipient.addWidget(lbl_recipient)
@@ -219,7 +233,8 @@ class MainWindow(QMainWindow):
         row_amount = QHBoxLayout()
         lbl_amount = QLabel("Amount (sats):")
         self.edit_amount = QLineEdit()
-        self.edit_amount.setValidator(QRegularExpressionValidator(QRegularExpression(r"^[0-9]{1,18}$"), self))
+        self.edit_amount.setValidator(QRegularExpressionValidator(
+            QRegularExpression(r"^[0-9]{1,18}$"), self))
         self.edit_amount.setPlaceholderText("e.g. 1000")
         row_amount.addWidget(lbl_amount)
         row_amount.addWidget(self.edit_amount)
@@ -250,7 +265,8 @@ class MainWindow(QMainWindow):
         lbl_invoice = QLabel("BOLT11 Invoice:")
         self.edit_invoice = ClickCopyLineEdit()
         self.edit_invoice.setReadOnly(True)
-        self.edit_invoice.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.edit_invoice.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Preferred)
         btn_copy = QPushButton("Copy")
         btn_copy.clicked.connect(self.on_copy_invoice)
 
@@ -264,7 +280,8 @@ class MainWindow(QMainWindow):
         qr_layout = QVBoxLayout(self.qr_container)
         qr_layout.setContentsMargins(0, 0, 0, 0)
         qr_layout.addWidget(self.lbl_qr)
-        self.qr_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.qr_container.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         # Status label
         self.lbl_status = QLabel("")
@@ -290,15 +307,16 @@ class MainWindow(QMainWindow):
         lnaddress = self.edit_recipient.text().strip()
         if not lnaddress:
             return
-    
+
         if not LNADDRESS_RE.match(lnaddress):
-            self.lbl_status.setText("LNAddress maybe invalid, max length for description not set.")
+            self.lbl_status.setText(
+                "LNAddress maybe invalid, max length for description not set.")
             return
-    
+
         # Disable LNAddress field while fetching
         self.edit_recipient.setEnabled(False)
         self.lbl_status.setText("Fetching LNURL info...")
-    
+
         self._lnurl_thread = QThread()
         self._lnurl_worker = LNURLWorker(lnaddress)
         self._lnurl_worker.moveToThread(self._lnurl_thread)
@@ -309,26 +327,28 @@ class MainWindow(QMainWindow):
         self._lnurl_thread.finished.connect(self._lnurl_thread.deleteLater)
         self._lnurl_thread.start()
 
-
     def on_lnurl_finished(self, result: dict):
         self.edit_recipient.setEnabled(True)
         if result.get("status") == "ok":
             max_len = result.get("comment_length", 0)
             self.set_comment_max_length(max_len)
-            self.lbl_status.setText(f"Description length limit: {max_len} Characters.")
+            self.lbl_status.setText(
+                f"Description length limit: {max_len} Characters.")
         else:
             msg = result.get("msg", "Unknown error")
-            self.lbl_status.setText(f"Error on requesting description length limit: {msg}")
+            self.lbl_status.setText(
+                f"Error on requesting description length limit: {msg}")
 
     def set_comment_max_length(self, max_len: int):
         """Set maximum allowed comment length and connect live counter."""
         self.comment_max_len = max_len
-    
+
         # nur disconnecten, wenn wirklich verbunden
         if self._comment_signal_connected:
-            self.edit_comment.textChanged.disconnect(self.update_comment_remaining)
+            self.edit_comment.textChanged.disconnect(
+                self.update_comment_remaining)
             self._comment_signal_connected = False
-    
+
         if max_len == 0:
             self.edit_comment.clear()
             self.edit_comment.setEnabled(False)
@@ -337,7 +357,8 @@ class MainWindow(QMainWindow):
         else:
             self.edit_comment.setEnabled(True)
             self.edit_comment.setPlaceholderText("Optional Description...")
-            self.edit_comment.textChanged.connect(self.update_comment_remaining)
+            self.edit_comment.textChanged.connect(
+                self.update_comment_remaining)
             self._comment_signal_connected = True
             self.update_comment_remaining()
 
@@ -368,14 +389,16 @@ class MainWindow(QMainWindow):
                                        QMessageBox.Yes | QMessageBox.No)
             if ret == QMessageBox.Yes:
                 self.edit_recipient.setText(text)
-                self.lbl_status.setText("Pasted clipboard (didn't match lnaddress pattern).")
+                self.lbl_status.setText(
+                    "Pasted clipboard (didn't match lnaddress pattern).")
 
     def on_generate(self):
         lnaddress = self.edit_recipient.text().strip()
         amount_text = self.edit_amount.text().strip()
 
         if not lnaddress:
-            QMessageBox.warning(self, "Missing recipient", "Please enter the recipient Lightning Address.")
+            QMessageBox.warning(self, "Missing recipient",
+                                "Please enter the recipient Lightning Address.")
             return
         if not LNADDRESS_RE.match(lnaddress):
             resp = QMessageBox.question(self, "Recipient format",
@@ -385,7 +408,8 @@ class MainWindow(QMainWindow):
                 return
 
         if not amount_text:
-            QMessageBox.warning(self, "Missing amount", "Please enter an amount (integer sats).")
+            QMessageBox.warning(self, "Missing amount",
+                                "Please enter an amount (integer sats).")
             return
 
         try:
@@ -393,7 +417,8 @@ class MainWindow(QMainWindow):
             if amount < 0:
                 raise ValueError("Amount negative")
         except Exception:
-            QMessageBox.warning(self, "Invalid amount", "Amount must be a non-negative integer (satoshis).")
+            QMessageBox.warning(
+                self, "Invalid amount", "Amount must be a non-negative integer (satoshis).")
             return
 
         comment = self.edit_comment.text().strip() or None
@@ -422,13 +447,15 @@ class MainWindow(QMainWindow):
             self.edit_invoice.setText(bolt11)
             self.edit_invoice.selectAll()  # select the text
             self.edit_invoice.setFocus()   # optional: move focus
-            self.lbl_status.setText("Invoice generated successfully. Double-click or press Copy to copy to clipboard.")
+            self.lbl_status.setText(
+                "Invoice generated successfully. Double-click or press Copy to copy to clipboard.")
             # Generate QR code
             # QR generieren
             pixmap = generate_invoice_qr(bolt11)
             # Pixmap auf Label setzen, Label passt sich an
             self.lbl_qr.setPixmap(pixmap)
-            self.lbl_status.setText("Invoice and QR generated successfully. Double-click to copy to clipboard.")
+            self.lbl_status.setText(
+                "Invoice and QR generated successfully. Double-click to copy to clipboard.")
         else:
             msg = result.get("msg", "Unknown error")
             self.lbl_status.setText(f"Error: {msg}")
@@ -438,7 +465,8 @@ class MainWindow(QMainWindow):
     def on_copy_invoice(self):
         text = self.edit_invoice.text()
         if not text:
-            QMessageBox.information(self, "Nothing to copy", "There is no invoice to copy.")
+            QMessageBox.information(
+                self, "Nothing to copy", "There is no invoice to copy.")
             return
         cb = QApplication.clipboard()
         cb.setText(text, mode=QClipboard.Clipboard)
