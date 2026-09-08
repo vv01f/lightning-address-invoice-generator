@@ -8,9 +8,9 @@
 let
   desktopItem = makeDesktopItem {
     name = "Zap";
-    exec = "zap";
+    exec = "zap %u";
     icon = "zap.github.vv01f";
-    comment = "Zap LNAddress 2 BOLT11 Invoice";
+    comment = "Zap LNAddress/LNURL 2 BOLT11 Invoice";
     desktopName = "Zap";
     categories = [
       "Office"
@@ -25,6 +25,9 @@ let
       "payment"
       "ecash"
       "zap"
+    ];
+    mimeTypes = [
+      "x-scheme-handler/lightning"
     ];
   };
 
