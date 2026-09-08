@@ -8,6 +8,7 @@ import re
 import urllib
 from datetime import datetime
 import bech32
+import hashlib
 
 def is_lnurl(value: str) -> bool:
     """
@@ -45,6 +46,34 @@ def decode_lnurl(lnurl: str) -> str:
 
     logging.info("Dekodierte LNURL-URL: " + url)
     return url
+
+def derive_lnaddress_from_url(url: str) -> str | None:
+    """
+    Versucht, aus einer dekodierten LNURLp-URL die zugehörige
+    Lightning-Adresse (name@domain.tld) abzuleiten.
+
+    Funktioniert nur, wenn die URL dem LUD-16-Schema
+    'https://domain.tld/.well-known/lnurlp/username' entspricht.
+    Andere LNURL-Formen (z. B. zufällige IDs, andere Pfade) liefern None.
+
+    Args:
+        url (str): Die dekodierte LNURL-Callback-/Metadaten-URL.
+
+    Returns:
+        str | None: Die abgeleitete Lightning-Adresse oder None, falls
+                     nicht ableitbar.
+    """
+    match = re.match(
+        r"^https://([^/]+)/\.well-known/lnurlp/([^/?#]+)/?$",
+        url.strip(),
+        re.IGNORECASE
+    )
+    if not match:
+        return None
+
+    domain = match.group(1)
+    username = match.group(2)
+    return f"{username}@{domain}"
 
 def resolve_payurl(identifier: str) -> str:
     """
@@ -86,6 +115,10 @@ def get_comment_length(datablock: dict) -> int:
     # Robust prüfen: Wenn 'commentAllowed' nicht existiert, False zurückgeben
     return int(datablock.get("commentAllowed", 0))
 
+def verify_description_hash(datablock: dict, tags: dict) -> bool:
+    metadata_raw = datablock.get("metadata", "")
+    expected_hash = hashlib.sha256(metadata_raw.encode("utf-8")).hexdigest()
+    return tags.get("description_hash") == expected_hash
 
 def get_bolt11(lnaddress, amount=None, comment=None):
     try:
@@ -93,6 +126,26 @@ def get_bolt11(lnaddress, amount=None, comment=None):
         purl = resolve_payurl(lnaddress)
         json_content = get_url(path=purl, headers={}).strip()
         datablock = json.loads(json_content)
+        description = get_metadata_description(datablock)
+        logging.info(f"Invoice-Beschreibung (aus metadata): {description!r} (Länge: {len(description)})")
+
+        # Validierung: sicherstellen, dass es sich um einen Pay-Request handelt
+        tag = datablock.get("tag")
+        if tag != "payRequest":
+            return {
+                "status": "error",
+                "msg": f"Diese LNURL ist kein Pay-Request (gefundener Typ: '{tag}')"
+            }
+
+        if is_lnurl(lnaddress):
+            derived = derive_lnaddress_from_url(purl)
+            if derived:
+                logging.info("Abgeleitete Lightning-Adresse: " + derived)
+                # ~ print(f"ℹ️  Abgeleitete Lightning-Adresse: {derived}")
+            else:
+                logging.info("Keine Lightning-Adresse aus LNURL ableitbar (kein LUD-16-Schema).")
+                # ~ print("ℹ️  Keine Lightning-Adresse aus dieser LNURL ableitbar.")
+
 
         lnurlpay = datablock["callback"]
         min_amount = int(datablock["minSendable"])
@@ -157,7 +210,6 @@ def get_bolt11(lnaddress, amount=None, comment=None):
         return {"status": "error", "msg": str(e)}
         # ~ logging.error("in get bolt11 : "  + str(e))
         # ~ return {'status': 'error', 'msg': 'Cannot make a Bolt11, are you sure the address `' + str(lnaddress) + '` is valid and the amount withing the allowed range [' + str(min_amount // 1000) + '; ' + str(max_amount // 1000) + '] Satoshi?'}
-
 
 def parse_positional_args(argv):
     lnaddress = None
@@ -229,6 +281,7 @@ def parse_tags(words):
                 tags['description'] = words_to_bytes(
                     data_words).decode('utf-8', errors='ignore')
             # ~ case 'h': # SHA256 hash of description (instead of d)
+                # ~ tags['description_hash'] = words_to_bytes(data_words).hex()
             case 'x':  # Expiry in seconds
                 tags['expiry'] = from_words(data_words)
             # ~ case 'c': # Final CLTV delta
@@ -245,6 +298,21 @@ def parse_tags(words):
         i = data_end
     return tags
 
+def get_metadata_description(datablock: dict) -> str:
+    """
+    Extrahiert den Klartext-Beschreibungstext aus dem metadata-Feld
+    einer LNURLp-Response (vor dem BOLT11-Callback).
+    """
+    metadata_raw = datablock.get("metadata", "[]")
+    try:
+        entries = json.loads(metadata_raw)
+    except (json.JSONDecodeError, TypeError):
+        return ""
+
+    for entry in entries:
+        if isinstance(entry, list) and len(entry) == 2 and entry[0] == "text/plain":
+            return entry[1]
+    return ""
 
 def decode_bolt11(invoice):
     hrp, data = bech32.bech32_decode(invoice.lower())
