@@ -1,12 +1,19 @@
 # Lightning Address to BOLT11 Invoice Generator
 
-This simple GUI `zap.py` and CLI script `lnaddress2invoice.py` allow you to generate BOLT11 invoices from Lightning Addresses.
+This simple GUI `zap.py` and CLI script `lnaddress2invoice.py` allow you
+to generate BOLT11 invoices from Lightning Addresses and LNURL.
 It asks for the Lightning Address and desired amount and returns a BOLT11 invoice.
 
 > Hecho con ❤️ y ⚡ en Puerto Rico 🏝️
 
 The script originally was almost completely lifted from https://sendsats.to/.
 It's a cool site for using your Lightning Address.
+
+## TODO
+
+* better error handling for LNURL on GUI
+* add support for npub alongside LNURL
+* add support for nprofile after npub
 
 ## Usage
 
