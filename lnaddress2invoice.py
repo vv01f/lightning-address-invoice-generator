@@ -9,6 +9,52 @@ import urllib
 from datetime import datetime
 import bech32
 
+def is_lnurl(value: str) -> bool:
+    """
+    Prüft, ob der übergebene String eine LNURL ist (ggf. mit
+    'lightning:'-URI-Präfix), statt einer Lightning-Adresse (name@domain.tld).
+    """
+    v = value.strip()
+    if v.lower().startswith("lightning:"):
+        v = v[len("lightning:"):]
+    return v.lower().startswith("lnurl1")
+
+def decode_lnurl(lnurl: str) -> str:
+    """
+    Dekodiert eine bech32-kodierte LNURL in die zugrunde liegende HTTPS-URL.
+
+    Akzeptiert sowohl reine LNURL-Strings (LNURL1...) als auch das
+    URI-Schema 'lightning:LNURL1...'.
+    """
+    value = lnurl.strip()
+    if value.lower().startswith("lightning:"):
+        value = value[len("lightning:"):]
+
+    hrp, data = _bech32_decode_no_limit(value)
+
+    if hrp is None or data is None:
+        raise ValueError(f"Konnte LNURL nicht dekodieren (bech32-Fehler): {lnurl}")
+    if hrp != "lnurl":
+        raise ValueError(f"Kein LNURL-HRP gefunden (gefunden: '{hrp}'): {lnurl}")
+
+    url_bytes = words_to_bytes(data)
+    try:
+        url = url_bytes.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise ValueError(f"Dekodierte LNURL-Daten sind kein gültiges UTF-8: {e}")
+
+    logging.info("Dekodierte LNURL-URL: " + url)
+    return url
+
+def resolve_payurl(identifier: str) -> str:
+    """
+    Ermittelt anhand des Eingabewerts, ob es sich um eine Lightning-Adresse
+    (name@domain.tld) oder eine LNURL handelt, und liefert die passende
+    HTTPS-URL für den LNURLp-Callback zurück.
+    """
+    if is_lnurl(identifier):
+        return decode_lnurl(identifier)
+    return get_payurl(identifier)
 
 def get_payurl(lnaddress):
     parts = lnaddress.split('@')
@@ -43,7 +89,8 @@ def get_comment_length(datablock: dict) -> int:
 
 def get_bolt11(lnaddress, amount=None, comment=None):
     try:
-        purl = get_payurl(lnaddress)
+        # ~ purl = get_payurl(lnaddress)
+        purl = resolve_payurl(lnaddress)
         json_content = get_url(path=purl, headers={}).strip()
         datablock = json.loads(json_content)
 
@@ -119,6 +166,9 @@ def parse_positional_args(argv):
     for arg in argv:
         # Detect email-like LN address (must contain one @ and at least one dot after it)
         if re.match(r"^[^@]+@[^@]+\.[^@]+$", arg):
+            lnaddress = arg
+        # for LNURL
+        elif is_lnurl(arg):
             lnaddress = arg
         # Detect valid integer amount (non-negative)
         elif arg.isdigit():
@@ -223,10 +273,35 @@ def decode_bolt11(invoice):
         print(f"- Routing Hints: {tags['routing_hints']}")
     print()
 
+def _bech32_decode_no_limit(bech: str):
+    """
+    Wie bech32.bech32_decode(), aber ohne die interne 90-Zeichen-Begrenzung,
+    da LNURLs häufig länger als 90 Zeichen sind.
+    """
+    if any(ord(x) < 33 or ord(x) > 126 for x in bech):
+        return (None, None)
+    if bech.lower() != bech and bech.upper() != bech:
+        return (None, None)
+
+    bech = bech.lower()
+    pos = bech.rfind('1')
+    if pos < 1 or pos + 7 > len(bech):
+        return (None, None)
+    if not all(x in bech32.CHARSET for x in bech[pos + 1:]):
+        return (None, None)
+
+    hrp = bech[:pos]
+    data = [bech32.CHARSET.find(x) for x in bech[pos + 1:]]
+
+    if not bech32.bech32_verify_checksum(hrp, data):
+        return (None, None)
+
+    return hrp, data[:-6]  # letzte 6 Werte sind die Checksumme
 
 def main():
     parser = argparse.ArgumentParser(description="Send a Lightning payment.")
-    parser.add_argument("-r", "--lnaddress", help="Lightning Address")
+    parser.add_argument("-r", "--lnaddress", type=str,
+                        help="Lightning Address (name@domain.tld) oder LNURL (lnurl1... / lightning:lnurl1...)")
     parser.add_argument("-a", "--amount", type=int,
                         help="Desired amount (integer)")
     parser.add_argument("-c", "--comment", type=str,
