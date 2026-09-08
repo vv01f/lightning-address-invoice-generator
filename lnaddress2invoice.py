@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import requests
+import hashlib
 import json
 import logging
 import argparse
@@ -7,8 +7,10 @@ import sys
 import re
 import urllib
 from datetime import datetime
+
+import requests
 import bech32
-import hashlib
+
 
 def is_lnurl(value: str) -> bool:
     """
@@ -17,8 +19,9 @@ def is_lnurl(value: str) -> bool:
     """
     v = value.strip()
     if v.lower().startswith("lightning:"):
-        v = v[len("lightning:"):]
+        v = v[len("lightning:") :]
     return v.lower().startswith("lnurl1")
+
 
 def decode_lnurl(lnurl: str) -> str:
     """
@@ -29,7 +32,7 @@ def decode_lnurl(lnurl: str) -> str:
     """
     value = lnurl.strip()
     if value.lower().startswith("lightning:"):
-        value = value[len("lightning:"):]
+        value = value[len("lightning:") :]
 
     hrp, data = _bech32_decode_no_limit(value)
 
@@ -46,6 +49,7 @@ def decode_lnurl(lnurl: str) -> str:
 
     logging.info("Dekodierte LNURL-URL: " + url)
     return url
+
 
 def derive_lnaddress_from_url(url: str) -> str | None:
     """
@@ -64,9 +68,7 @@ def derive_lnaddress_from_url(url: str) -> str | None:
                      nicht ableitbar.
     """
     match = re.match(
-        r"^https://([^/]+)/\.well-known/lnurlp/([^/?#]+)/?$",
-        url.strip(),
-        re.IGNORECASE
+        r"^https://([^/]+)/\.well-known/lnurlp/([^/?#]+)/?$", url.strip(), re.IGNORECASE
     )
     if not match:
         return None
@@ -74,6 +76,7 @@ def derive_lnaddress_from_url(url: str) -> str | None:
     domain = match.group(1)
     username = match.group(2)
     return f"{username}@{domain}"
+
 
 def resolve_payurl(identifier: str) -> str:
     """
@@ -85,8 +88,9 @@ def resolve_payurl(identifier: str) -> str:
         return decode_lnurl(identifier)
     return get_payurl(identifier)
 
+
 def get_payurl(lnaddress):
-    parts = lnaddress.split('@')
+    parts = lnaddress.split("@")
     if len(parts) != 2:
         raise ValueError(f"Errorm possibly malformed LN Address: {lnaddress}")
     domain = parts[1]
@@ -115,10 +119,12 @@ def get_comment_length(datablock: dict) -> int:
     # Robust prüfen: Wenn 'commentAllowed' nicht existiert, False zurückgeben
     return int(datablock.get("commentAllowed", 0))
 
+
 def verify_description_hash(datablock: dict, tags: dict) -> bool:
     metadata_raw = datablock.get("metadata", "")
     expected_hash = hashlib.sha256(metadata_raw.encode("utf-8")).hexdigest()
     return tags.get("description_hash") == expected_hash
+
 
 def get_bolt11(lnaddress, amount=None, comment=None):
     try:
@@ -127,14 +133,16 @@ def get_bolt11(lnaddress, amount=None, comment=None):
         json_content = get_url(path=purl, headers={}).strip()
         datablock = json.loads(json_content)
         description = get_metadata_description(datablock)
-        logging.info(f"Invoice-Beschreibung (aus metadata): {description!r} (Länge: {len(description)})")
+        logging.info(
+            f"Invoice-Beschreibung (aus metadata): {description!r} (Länge: {len(description)})"
+        )
 
         # Validierung: sicherstellen, dass es sich um einen Pay-Request handelt
         tag = datablock.get("tag")
         if tag != "payRequest":
             return {
                 "status": "error",
-                "msg": f"Diese LNURL ist kein Pay-Request (gefundener Typ: '{tag}')"
+                "msg": f"Diese LNURL ist kein Pay-Request (gefundener Typ: '{tag}')",
             }
 
         if is_lnurl(lnaddress):
@@ -143,9 +151,10 @@ def get_bolt11(lnaddress, amount=None, comment=None):
                 logging.info("Abgeleitete Lightning-Adresse: " + derived)
                 # ~ print(f"ℹ️  Abgeleitete Lightning-Adresse: {derived}")
             else:
-                logging.info("Keine Lightning-Adresse aus LNURL ableitbar (kein LUD-16-Schema).")
+                logging.info(
+                    "Keine Lightning-Adresse aus LNURL ableitbar (kein LUD-16-Schema)."
+                )
                 # ~ print("ℹ️  Keine Lightning-Adresse aus dieser LNURL ableitbar.")
-
 
         lnurlpay = datablock["callback"]
         min_amount = int(datablock["minSendable"])
@@ -161,12 +170,12 @@ def get_bolt11(lnaddress, amount=None, comment=None):
             if amount_msat < min_amount:
                 return {
                     "status": "error",
-                    "msg": f"Amount too small, must be in range {min_amount // 1000} and {max_amount // 1000} sat"
+                    "msg": f"Amount too small, must be in range {min_amount // 1000} and {max_amount // 1000} sat",
                 }
             elif amount_msat > max_amount:
                 return {
                     "status": "error",
-                    "msg": f"Amount too big, must be in range {min_amount // 1000} and {max_amount // 1000} sat"
+                    "msg": f"Amount too big, must be in range {min_amount // 1000} and {max_amount // 1000} sat",
                 }
         else:
             amount_msat = None
@@ -183,8 +192,7 @@ def get_bolt11(lnaddress, amount=None, comment=None):
         # If comment is allowed, truncate if necessary and add to query
         if comment_allowed > 0 and comment:
             if len(comment) > comment_allowed:
-                logging.info(
-                    f"Comment truncated to {comment_allowed} characters")
+                logging.info(f"Comment truncated to {comment_allowed} characters")
                 comment = comment[:comment_allowed]
             query_params["comment"] = comment
 
@@ -198,10 +206,10 @@ def get_bolt11(lnaddress, amount=None, comment=None):
         ln_res = get_url(path=payquery, headers={})
         pr_dict = json.loads(ln_res)
 
-        if 'pr' in pr_dict:
-            return {"status": "ok", "bolt11": pr_dict['pr']}
-        elif 'reason' in pr_dict:
-            return {"status": "error", "msg": pr_dict['reason']}
+        if "pr" in pr_dict:
+            return {"status": "ok", "bolt11": pr_dict["pr"]}
+        elif "reason" in pr_dict:
+            return {"status": "error", "msg": pr_dict["reason"]}
         else:
             return {"status": "error", "msg": "Unexpected response format"}
 
@@ -210,6 +218,7 @@ def get_bolt11(lnaddress, amount=None, comment=None):
         return {"status": "error", "msg": str(e)}
         # ~ logging.error("in get bolt11 : "  + str(e))
         # ~ return {'status': 'error', 'msg': 'Cannot make a Bolt11, are you sure the address `' + str(lnaddress) + '` is valid and the amount withing the allowed range [' + str(min_amount // 1000) + '; ' + str(max_amount // 1000) + '] Satoshi?'}
+
 
 def parse_positional_args(argv):
     lnaddress = None
@@ -228,6 +237,7 @@ def parse_positional_args(argv):
 
     return lnaddress, amount
 
+
 # Helper: 5-bit group to integer
 
 
@@ -236,6 +246,7 @@ def from_words(words):
     for w in words:
         value = (value << 5) | w
     return value
+
 
 # Helper: 5-bit group to bytes
 
@@ -258,7 +269,7 @@ def parse_tags(words):
     i = 0
     while i + 3 <= len(words):
         tag_int = int(words[i])
-        tag_char = chr(tag_int + ord('a'))
+        tag_char = chr(tag_int + ord("a"))
 
         data_length = (words[i + 1] << 5) | words[i + 2]
         data_start = i + 3
@@ -271,32 +282,33 @@ def parse_tags(words):
         data_words = words[data_start:data_end]
 
         # Debugging output to track what is being parsed
-        print(
-            f"🔍 Found tag: {tag_char} with {data_length} words: {data_words}")
+        print(f"🔍 Found tag: {tag_char} with {data_length} words: {data_words}")
 
         match tag_char:
-            case 'p':  # Preimage hash (mandatory)
-                tags['payment_hash'] = words_to_bytes(data_words).hex()
-            case 'd':  # Human-readable description (optional)
-                tags['description'] = words_to_bytes(
-                    data_words).decode('utf-8', errors='ignore')
+            case "p":  # Preimage hash (mandatory)
+                tags["payment_hash"] = words_to_bytes(data_words).hex()
+            case "d":  # Human-readable description (optional)
+                tags["description"] = words_to_bytes(data_words).decode(
+                    "utf-8", errors="ignore"
+                )
             # ~ case 'h': # SHA256 hash of description (instead of d)
-                # ~ tags['description_hash'] = words_to_bytes(data_words).hex()
-            case 'x':  # Expiry in seconds
-                tags['expiry'] = from_words(data_words)
+            # ~ tags['description_hash'] = words_to_bytes(data_words).hex()
+            case "x":  # Expiry in seconds
+                tags["expiry"] = from_words(data_words)
             # ~ case 'c': # Final CLTV delta
-            case 'n':  # Node ID
-                tags['payee_pubkey'] = words_to_bytes(data_words).hex()
-            case 'f':  # On-chain fallback address
-                tags['fallback_address'] = words_to_bytes(data_words).hex()
-            case 'r':  # Routing hints (list of hops)
-                tags['routing_hints'] = [words_to_bytes(data_words).hex()]
+            case "n":  # Node ID
+                tags["payee_pubkey"] = words_to_bytes(data_words).hex()
+            case "f":  # On-chain fallback address
+                tags["fallback_address"] = words_to_bytes(data_words).hex()
+            case "r":  # Routing hints (list of hops)
+                tags["routing_hints"] = [words_to_bytes(data_words).hex()]
             # ~ case 'm': # Feature bits
             case _:  # Debugging
-                tags[f'unknown_{tag_char}'] = data_words
+                tags[f"unknown_{tag_char}"] = data_words
 
         i = data_end
     return tags
+
 
 def get_metadata_description(datablock: dict) -> str:
     """
@@ -313,6 +325,7 @@ def get_metadata_description(datablock: dict) -> str:
         if isinstance(entry, list) and len(entry) == 2 and entry[0] == "text/plain":
             return entry[1]
     return ""
+
 
 def decode_bolt11(invoice):
     hrp, data = bech32.bech32_decode(invoice.lower())
@@ -337,9 +350,10 @@ def decode_bolt11(invoice):
     print(f"- Expiry: {tags.get('expiry', '(fallback) 3600')} seconds")
     print(f"- Payee Pubkey: {tags.get('payee_pubkey', 'n/a')}")
     print(f"- Fallback Address: {tags.get('fallback_address', 'n/a')}")
-    if 'routing_hints' in tags:
+    if "routing_hints" in tags:
         print(f"- Routing Hints: {tags['routing_hints']}")
     print()
+
 
 def _bech32_decode_no_limit(bech: str):
     """
@@ -352,32 +366,37 @@ def _bech32_decode_no_limit(bech: str):
         return (None, None)
 
     bech = bech.lower()
-    pos = bech.rfind('1')
+    pos = bech.rfind("1")
     if pos < 1 or pos + 7 > len(bech):
         return (None, None)
-    if not all(x in bech32.CHARSET for x in bech[pos + 1:]):
+    if not all(x in bech32.CHARSET for x in bech[pos + 1 :]):
         return (None, None)
 
     hrp = bech[:pos]
-    data = [bech32.CHARSET.find(x) for x in bech[pos + 1:]]
+    data = [bech32.CHARSET.find(x) for x in bech[pos + 1 :]]
 
     if not bech32.bech32_verify_checksum(hrp, data):
         return (None, None)
 
     return hrp, data[:-6]  # letzte 6 Werte sind die Checksumme
 
+
 def main():
     parser = argparse.ArgumentParser(description="Send a Lightning payment.")
-    parser.add_argument("-r", "--lnaddress", type=str,
-                        help="Lightning Address (name@domain.tld) oder LNURL (lnurl1... / lightning:lnurl1...)")
-    parser.add_argument("-a", "--amount", type=int,
-                        help="Desired amount (integer)")
-    parser.add_argument("-c", "--comment", type=str,
-                        help="Optional comment to include in the invoice")
-    parser.add_argument("-v", "--verbose",
-                        action="store_true", help="Enable logging")
-    parser.add_argument("-f", "--logfile", type=str,
-                        help="Write log to a specified file")
+    parser.add_argument(
+        "-r",
+        "--lnaddress",
+        type=str,
+        help="Lightning Address (name@domain.tld) oder LNURL (lnurl1... / lightning:lnurl1...)",
+    )
+    parser.add_argument("-a", "--amount", type=int, help="Desired amount (integer)")
+    parser.add_argument(
+        "-c", "--comment", type=str, help="Optional comment to include in the invoice"
+    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="Enable logging")
+    parser.add_argument(
+        "-f", "--logfile", type=str, help="Write log to a specified file"
+    )
     # ~ parser.add_argument("-d", "--decode", action="store_true", help="Decode and display the BOLT11 invoice")
 
     # Try to detect lnaddress and amount from positional args
@@ -396,15 +415,16 @@ def main():
     if log_handlers:
         logging.basicConfig(
             level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            handlers=log_handlers
+            format="%(asctime)s - %(levelname)s - %(message)s",
+            handlers=log_handlers,
         )
     else:
         logging.disable(logging.CRITICAL)
 
     # Access parsed arguments safely
-    lnaddress = args.lnaddress or detected_lnaddress or input(
-        "Enter your Lightning Address: ")
+    lnaddress = (
+        args.lnaddress or detected_lnaddress or input("Enter your Lightning Address: ")
+    )
 
     amount = args.amount or detected_amount
     # Prompt for amount only if still missing
@@ -421,7 +441,8 @@ def main():
     comment = args.comment
     if comment is None:
         comment = input(
-            "Enter a comment (optional, max length enforced by receiver, press Enter to skip): ").strip()
+            "Enter a comment (optional, max length enforced by receiver, press Enter to skip): "
+        ).strip()
         if comment == "":
             comment = None
 
