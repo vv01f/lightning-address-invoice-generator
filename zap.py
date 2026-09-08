@@ -24,6 +24,7 @@ import sys
 import re
 import json
 from typing import Optional
+import argparse
 
 from PySide6.QtWidgets import (
     QApplication,
@@ -330,7 +331,7 @@ class MainWindow(QMainWindow):
         self.edit_recipient.setEnabled(False)
         self.lbl_status.setText("Fetching LNURL info...")
 
-        self._lnurl_thread = QThread()
+        self._lnurl_thread = QThread(self)
         self._lnurl_worker = LNURLWorker(lnaddress)
         self._lnurl_worker.moveToThread(self._lnurl_thread)
         self._lnurl_thread.started.connect(self._lnurl_worker.run)
@@ -339,6 +340,7 @@ class MainWindow(QMainWindow):
         self._lnurl_worker.finished.connect(self._lnurl_worker.deleteLater)
         self._lnurl_thread.finished.connect(self._lnurl_thread.deleteLater)
         self._lnurl_thread.start()
+
 
     def on_lnurl_finished(self, result: dict):
         self.edit_recipient.setEnabled(True)
@@ -454,7 +456,7 @@ class MainWindow(QMainWindow):
         self.edit_invoice.clear()
 
         # Create worker and thread
-        self._thread = QThread()
+        self._thread = QThread(self)
         self._worker = InvoiceWorker(lnaddress, amount, comment)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
@@ -501,7 +503,38 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText("Invoice copied to clipboard.")
 
 
+    def shutdown(self):
+        """Stop all worker threads before the application exits."""
+    
+        for thread in (self._thread, self._lnurl_thread):
+            if thread is not None and thread.isRunning():
+                thread.requestInterruption()
+                thread.quit()
+                thread.wait()
+
+
+def parse_lightning_address_argument() -> Optional[str]:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("address", nargs="?")
+    args = parser.parse_args()
+
+    if not args.address:
+        return None
+
+    address = args.address.strip()
+
+    # Accept both:
+    #   user@domain.tld
+    #   lightning:user@domain.tld
+    if address.lower().startswith("lightning:"):
+        address = address[len("lightning:"):]
+
+    return address
+
+
 def main():
+    lnaddress = parse_lightning_address_argument()
+
     app = QApplication(sys.argv)
 
     if get_bolt11 is None:
@@ -511,7 +544,12 @@ def main():
             "Could not import get_bolt11 from lnaddress2invoice.py.\n"
             "Make sure lnaddress2invoice.py is in the same directory and is importable.",
         )
-    window = MainWindow()
+    window = MainWindow()    
+    app.aboutToQuit.connect(window.shutdown)
+
+    if lnaddress:
+        window.edit_recipient.setText(lnaddress)
+
     window.show()
     sys.exit(app.exec())
 
