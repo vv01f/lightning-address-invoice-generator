@@ -12,8 +12,12 @@ It's a cool site for using your Lightning Address.
 ## TODO
 
 * better error handling for LNURL on GUI
+* handle error msg in status for false lnaddress
+* display desc. length limit for LNURL
+* fix mixed language for app
 * add support for npub alongside LNURL
 * add support for nprofile after npub
+* add multilang support
 
 ## Usage
 
