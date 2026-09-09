@@ -506,11 +506,25 @@ class MainWindow(QMainWindow):
     def shutdown(self):
         """Stop all worker threads before the application exits."""
     
-        for thread in (self._thread, self._lnurl_thread):
-            if thread is not None and thread.isRunning():
+        threads = (self._thread, self._lnurl_thread)
+    
+        self._thread = None
+        self._lnurl_thread = None
+    
+        for thread in threads:
+            if thread is None:
+                continue
+    
+            try:
+                if not thread.isRunning():
+                    continue
+    
                 thread.requestInterruption()
                 thread.quit()
                 thread.wait()
+            except RuntimeError:
+                # Qt has already deleted the underlying C++ object.
+                continue
 
 
 def parse_lightning_address_argument() -> Optional[str]:

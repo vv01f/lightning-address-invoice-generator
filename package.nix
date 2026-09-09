@@ -7,18 +7,19 @@
 
 let
   desktopItem = makeDesktopItem {
-    name = "Zap";
+    name = "zap";
     exec = "zap %u";
     icon = "zap.github.vv01f";
     comment = "Zap LNAddress/LNURL 2 BOLT11 Invoice";
     desktopName = "Zap";
+    genericName = "Lightning Zap";
     categories = [
       "Office"
       "Finance"
       "Utility"
     ];
     terminal = false;
-    startupWMClass = "Zap";
+    startupWMClass = "zap";
     keywords = [
       "bitcoin"
       "lightning"
