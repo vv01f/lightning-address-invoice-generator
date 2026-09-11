@@ -50,9 +50,10 @@
             zapPkg
           ];
 
-          packages = [
-            pkgs.ruff
-            pkgs.nixfmt-rfc-style
+          packages = with pkgs; [
+            ruff
+            nixfmt-rfc-style
+            nix-prefetch-github
           ];
 
           shellHook = ''
