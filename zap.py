@@ -11,7 +11,7 @@ Run with: python lnaddress2invoice_gui.py
 This GUI provides:
  - Recipient (Lightning Address) input
  - Amount (integer, sats) input
- - Paste button: pastes clipboard if it *looks like* an lnaddress
+ - Paste button: pastes clipboard if it *looks like* an LNAddress
  - Generate button: calls get_bolt11(lnaddress, amount) in a background thread
  - Read-only invoice field with Copy button. Double-clicking the invoice field
    also copies it.
@@ -53,11 +53,26 @@ from PIL.ImageQt import ImageQt
 # Import the get_bolt11 function from the existing script
 # Make sure lnaddress2invoice.py is in the same directory or in PYTHONPATH
 try:
-    from lnaddress2invoice import get_bolt11
+    from lnaddress2invoice import (
+        get_bolt11,
+        is_lnurl,
+        normalize_lightning_uri,
+    )
 except Exception as e:
     get_bolt11 = None
+    is_lnurl = None
 
 LNADDRESS_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def normalize_lnaddress(value: str) -> str:
+    """Remove the lightning: URI scheme from an entered Lightning Address."""
+    value = value.strip()
+
+    if value.lower().startswith("lightning:"):
+        value = value[len("lightning:") :].strip()
+
+    return value
 
 
 class LNURLWorker(QObject):
@@ -68,14 +83,55 @@ class LNURLWorker(QObject):
         self.lnaddress = lnaddress
 
     def run(self):
-        from lnaddress2invoice import get_payurl, get_url, get_comment_length
+        from lnaddress2invoice import (
+            get_payurl,
+            get_url,
+            get_comment_length,
+            get_metadata_identifier,
+            is_lnurl,
+            decode_lnurl,
+            derive_lnaddress_from_url,
+        )
 
         try:
-            purl = get_payurl(self.lnaddress)
-            json_content = get_url(purl, headers={}).strip()
-            datablock = json.loads(json_content)
+            if is_lnurl(self.lnaddress):
+                purl = decode_lnurl(self.lnaddress)
+            else:
+                purl = get_payurl(self.lnaddress)
+
+            try:
+                json_content = get_url(purl, headers={}).strip()
+            except Exception:
+                raise ValueError("Server not reachable or address does not exist")
+
+            try:
+                datablock = json.loads(json_content)
+            except Exception:
+                raise ValueError("Server returned an invalid response")
+
+            if datablock.get("tag") != "payRequest":
+                raise ValueError(
+                    f"Not a pay-request LNURL (tag: {datablock.get('tag')})"
+                )
+
+            # Determine the effective Lightning Address exactly like
+            # get_bolt11() does.
+            effective_lnaddress = (
+                get_metadata_identifier(datablock)
+                or derive_lnaddress_from_url(datablock.get("callback", ""))
+                or (self.lnaddress if not is_lnurl(self.lnaddress) else None)
+            )
+
             comment_allowed = get_comment_length(datablock)
-            self.finished.emit({"status": "ok", "comment_length": comment_allowed})
+
+            self.finished.emit(
+                {
+                    "status": "ok",
+                    "comment_length": comment_allowed,
+                    "effective_lnaddress": effective_lnaddress,
+                }
+            )
+
         except Exception as e:
             self.finished.emit({"status": "error", "msg": str(e)})
 
@@ -199,27 +255,28 @@ class InvoiceWorker(QObject):
         self.finished.emit(res)
 
 
-class RecipientLineEdit(QLineEdit):
-    """
-    Subclass QLineEdit to move focus to Amount field when LNAddress editing is done.
-    """
+# ~ class RecipientLineEdit(QLineEdit):
+# ~ """
+# ~ Subclass QLineEdit to move focus to Amount field when LNAddress editing is done.
+# ~ """
 
-    def __init__(self, main_window: MainWindow):
-        super().__init__()
-        self.main_window = main_window
+# ~ def __init__(self, main_window: MainWindow):
+# ~ super().__init__()
+# ~ self.main_window = main_window
 
-    def focusOutEvent(self, event):
-        # Call the main window handler first
-        self.main_window.on_lnaddress_finished()
-        # Force focus to Amount field
-        self.main_window.edit_amount.setFocus()
-        # Continue with normal focus-out handling
-        super().focusOutEvent(event)
+# ~ def focusOutEvent(self, event):
+# ~ super().focusOutEvent(event)
+
+# ~ self.main_window.on_lnaddress_finished()
+
+# ~ if self.isEnabled():
+# ~ self.main_window.edit_amount.setFocus()
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+
         self.setWindowTitle("LNAddress to BOLT11")
         self.resize(400, 320)
         self.setMinimumSize(320, 250)
@@ -231,17 +288,28 @@ class MainWindow(QMainWindow):
 
         # Recipient row
         row_recipient = QHBoxLayout()
-        lbl_recipient = QLabel("Recipient (lnaddress):")
+        lbl_recipient = QLabel("Recipient (LNAddress):")
         # ~ self.edit_recipient = QLineEdit()
         # ~ self.edit_recipient.editingFinished.connect(self.on_lnaddress_finished)
-        self.edit_recipient = RecipientLineEdit(self)
-        self.edit_recipient.setPlaceholderText("user@example.com")
+        self.edit_recipient = QLineEdit(self)
+        self.edit_recipient.setPlaceholderText("username@domain.tld")
+        self.edit_recipient.editingFinished.connect(self.on_lnaddress_finished)
         btn_paste = QPushButton("Paste")
         btn_paste.clicked.connect(self.on_paste)
 
         row_recipient.addWidget(lbl_recipient)
         row_recipient.addWidget(self.edit_recipient)
         row_recipient.addWidget(btn_paste)
+
+        # Effective lnaddress row
+        row_effective = QHBoxLayout()
+        lbl_effective = QLabel("Effective LNAddress:")
+        self.edit_effective = QLineEdit()
+        self.edit_effective.setReadOnly(True)
+        self.edit_effective.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+        row_effective.addWidget(lbl_effective)
+        row_effective.addWidget(self.edit_effective)
 
         # Amount row
         row_amount = QHBoxLayout()
@@ -300,6 +368,7 @@ class MainWindow(QMainWindow):
         self.lbl_status = QLabel("")
 
         layout.addLayout(row_recipient)
+        layout.addLayout(row_effective)
         layout.addLayout(row_amount)
         layout.addLayout(row_comment)
         layout.addWidget(self.btn_generate)
@@ -312,46 +381,100 @@ class MainWindow(QMainWindow):
         # Thread placeholders
         self._thread: Optional[QThread] = None
         self._worker: Optional[InvoiceWorker] = None
+        self._lnurl_thread: Optional[QThread] = None
+        self._lnurl_worker: Optional[LNURLWorker] = None
 
     def update_status(self, msg: str):
         self.lbl_status.setText(msg)
 
+    def _clear_lnurl_thread(self):
+        """Forget the LNURL worker/thread after Qt has finished them."""
+        self._lnurl_worker = None
+        self._lnurl_thread = None
+
     def on_lnaddress_finished(self):
-        lnaddress = self.edit_recipient.text().strip()
+        # A previous lookup is still running.
+        if self._lnurl_thread is not None:
+            try:
+                if self._lnurl_thread.isRunning():
+                    return
+            except RuntimeError:
+                # The underlying C++ QThread was already deleted.
+                self._lnurl_thread = None
+                self._lnurl_worker = None
+
+        self.edit_effective.clear()
+        self.edit_amount.setFocus()
+
+        raw_lnaddress = self.edit_recipient.text()
+        lnaddress = normalize_lightning_uri(raw_lnaddress)
+
+        if lnaddress != raw_lnaddress.strip():
+            self.edit_recipient.setText(lnaddress)
+
         if not lnaddress:
             return
 
-        if not LNADDRESS_RE.match(lnaddress):
+        if not LNADDRESS_RE.match(lnaddress) and not is_lnurl(lnaddress):
             self.lbl_status.setText(
-                "LNAddress maybe invalid, max length for description not set."
+                "LNAddress/LNURL maybe invalid, max length for description not set."
             )
+            self.set_comment_max_length(0)
             return
 
-        # Disable LNAddress field while fetching
+        # Disable LNAddress field while fetching.
         self.edit_recipient.setEnabled(False)
+        self.lbl_comment_remaining.setText("0 characters left")
         self.lbl_status.setText("Fetching LNURL info...")
 
-        self._lnurl_thread = QThread(self)
-        self._lnurl_worker = LNURLWorker(lnaddress)
-        self._lnurl_worker.moveToThread(self._lnurl_thread)
-        self._lnurl_thread.started.connect(self._lnurl_worker.run)
-        self._lnurl_worker.finished.connect(self.on_lnurl_finished)
-        self._lnurl_worker.finished.connect(self._lnurl_thread.quit)
-        self._lnurl_worker.finished.connect(self._lnurl_worker.deleteLater)
-        self._lnurl_thread.finished.connect(self._lnurl_thread.deleteLater)
-        self._lnurl_thread.start()
+        thread = QThread(self)
+        worker = LNURLWorker(lnaddress)
 
+        self._lnurl_thread = thread
+        self._lnurl_worker = worker
+
+        worker.moveToThread(thread)
+
+        thread.started.connect(worker.run)
+
+        worker.finished.connect(self.on_lnurl_finished)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+
+        # IMPORTANT:
+        # Clear our Python references when the thread has actually finished.
+        thread.finished.connect(self._clear_lnurl_thread)
+        thread.finished.connect(thread.deleteLater)
+
+        thread.start()
 
     def on_lnurl_finished(self, result: dict):
         self.edit_recipient.setEnabled(True)
+
         if result.get("status") == "ok":
             max_len = result.get("comment_length", 0)
+            effective = result.get("effective_lnaddress")
+
+            self.edit_effective.setText(effective or "")
             self.set_comment_max_length(max_len)
-            self.lbl_status.setText(f"Description length limit: {max_len} Characters.")
+
+            if effective:
+                self.lbl_status.setText(
+                    f"Desc. limit: {max_len} Characters. Eff. LNAddress: {effective}"
+                )
+            else:
+                self.lbl_status.setText(
+                    f"Description length limit: {max_len} Characters. "
+                    f"No effective LNAddress derivable."
+                )
         else:
             msg = result.get("msg", "Unknown error")
+
+            self.edit_effective.clear()
+            self.set_comment_max_length(0)
+
             self.lbl_status.setText(
-                f"Error on requesting description length limit: {msg}"
+                f"Invalid or unreachable Lightning Address/LNURL: {msg}"
             )
 
     def set_comment_max_length(self, max_len: int):
@@ -392,25 +515,32 @@ class MainWindow(QMainWindow):
     def on_paste(self):
         cb = QApplication.clipboard()
         text = cb.text().strip()
-        if LNADDRESS_RE.match(text):
+        if LNADDRESS_RE.match(text) or is_lnurl(text):
             self.edit_recipient.setText(text)
-            self.lbl_status.setText("Pasted lnaddress from clipboard.")
+            self.lbl_status.setText("Pasted LNAddress/LNURL from clipboard.")
+            self.on_lnaddress_finished()
         else:
-            # Not an lnaddress: ask the user whether to paste anyway
+            # Not an LNAddress: ask the user whether to paste anyway
             ret = QMessageBox.question(
                 self,
                 "Paste from clipboard?",
-                "Clipboard does not look like an lnaddress. Paste anyway?",
+                "Clipboard does not look like an LNAddress. Paste anyway?",
                 QMessageBox.Yes | QMessageBox.No,
             )
             if ret == QMessageBox.Yes:
                 self.edit_recipient.setText(text)
                 self.lbl_status.setText(
-                    "Pasted clipboard (didn't match lnaddress pattern)."
+                    "Pasted clipboard (didn't match LNAddress pattern)."
                 )
+                self.on_lnaddress_finished()
 
     def on_generate(self):
-        lnaddress = self.edit_recipient.text().strip()
+        raw_lnaddress = self.edit_recipient.text()
+        lnaddress = normalize_lightning_uri(raw_lnaddress)
+
+        if lnaddress != raw_lnaddress.strip():
+            self.edit_recipient.setText(lnaddress)
+
         amount_text = self.edit_amount.text().strip()
 
         if not lnaddress:
@@ -420,11 +550,11 @@ class MainWindow(QMainWindow):
                 "Please enter the recipient Lightning Address.",
             )
             return
-        if not LNADDRESS_RE.match(lnaddress):
+        if not LNADDRESS_RE.match(lnaddress) and not is_lnurl(lnaddress):
             resp = QMessageBox.question(
                 self,
                 "Recipient format",
-                "Recipient doesn't look like an lnaddress. Continue anyway?",
+                "Recipient does not look like an LNAddress. Continue anyway?",
                 QMessageBox.Yes | QMessageBox.No,
             )
             if resp != QMessageBox.Yes:
@@ -454,6 +584,7 @@ class MainWindow(QMainWindow):
         self.btn_generate.setEnabled(False)
         self.lbl_status.setText("Generating invoice...")
         self.edit_invoice.clear()
+        # ~ self.edit_effective.clear()
 
         # Create worker and thread
         self._thread = QThread(self)
@@ -471,6 +602,10 @@ class MainWindow(QMainWindow):
 
         if result.get("status") == "ok":
             bolt11 = result.get("bolt11")
+
+            # ~ effective_lnaddress = result.get("effective_lnaddress")
+            # ~ self.edit_effective.setText(effective_lnaddress or "")
+
             self.edit_invoice.setText(bolt11)
             self.edit_invoice.selectAll()  # select the text
             self.edit_invoice.setFocus()  # optional: move focus
@@ -502,29 +637,28 @@ class MainWindow(QMainWindow):
         cb.setText(text, mode=QClipboard.Clipboard)
         self.lbl_status.setText("Invoice copied to clipboard.")
 
-
     def shutdown(self):
         """Stop all worker threads before the application exits."""
-    
+
         threads = (self._thread, self._lnurl_thread)
-    
+
         self._thread = None
+        self._worker = None
         self._lnurl_thread = None
-    
+        self._lnurl_worker = None
+
         for thread in threads:
             if thread is None:
                 continue
-    
+
             try:
-                if not thread.isRunning():
-                    continue
-    
-                thread.requestInterruption()
-                thread.quit()
-                thread.wait()
+                if thread.isRunning():
+                    thread.requestInterruption()
+                    thread.quit()
+                    thread.wait()
             except RuntimeError:
                 # Qt has already deleted the underlying C++ object.
-                continue
+                pass
 
 
 def parse_lightning_address_argument() -> Optional[str]:
@@ -541,7 +675,7 @@ def parse_lightning_address_argument() -> Optional[str]:
     #   user@domain.tld
     #   lightning:user@domain.tld
     if address.lower().startswith("lightning:"):
-        address = address[len("lightning:"):]
+        address = address[len("lightning:") :]
 
     return address
 
@@ -558,7 +692,7 @@ def main():
             "Could not import get_bolt11 from lnaddress2invoice.py.\n"
             "Make sure lnaddress2invoice.py is in the same directory and is importable.",
         )
-    window = MainWindow()    
+    window = MainWindow()
     app.aboutToQuit.connect(window.shutdown)
 
     if lnaddress:

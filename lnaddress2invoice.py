@@ -17,10 +17,26 @@ def is_lnurl(value: str) -> bool:
     Prüft, ob der übergebene String eine LNURL ist (ggf. mit
     'lightning:'-URI-Präfix), statt einer Lightning-Adresse (name@domain.tld).
     """
-    v = value.strip()
-    if v.lower().startswith("lightning:"):
-        v = v[len("lightning:") :]
+    v = normalize_lightning_uri(value)
     return v.lower().startswith("lnurl1")
+
+
+def normalize_lightning_uri(value: str) -> str:
+    """
+    Remove the optional 'lightning:' URI scheme prefix.
+
+    Accepts both:
+      user@domain.tld
+      lightning:user@domain.tld
+      lnurl1...
+      lightning:lnurl1...
+    """
+    value = value.strip()
+
+    if value.lower().startswith("lightning:"):
+        value = value[len("lightning:") :].strip()
+
+    return value
 
 
 def decode_lnurl(lnurl: str) -> str:
@@ -30,9 +46,7 @@ def decode_lnurl(lnurl: str) -> str:
     Akzeptiert sowohl reine LNURL-Strings (LNURL1...) als auch das
     URI-Schema 'lightning:LNURL1...'.
     """
-    value = lnurl.strip()
-    if value.lower().startswith("lightning:"):
-        value = value[len("lightning:") :]
+    value = normalize_lightning_uri(lnurl)
 
     hrp, data = _bech32_decode_no_limit(value)
 
@@ -64,11 +78,13 @@ def derive_lnaddress_from_url(url: str) -> str | None:
         url (str): Die dekodierte LNURL-Callback-/Metadaten-URL.
 
     Returns:
-        str | None: Die abgeleitete Lightning-Adresse oder None, falls
+        str | None: Die effektive Lightning-Adresse oder None, falls
                      nicht ableitbar.
     """
     match = re.match(
-        r"^https://([^/]+)/\.well-known/lnurlp/([^/?#]+)/?$", url.strip(), re.IGNORECASE
+        r"^https://([^/]+)/\.well-known/lnurlp/([^/?#]+)/?(?:[?#].*)?$",
+        url.strip(),
+        re.IGNORECASE,
     )
     if not match:
         return None
@@ -126,10 +142,35 @@ def verify_description_hash(datablock: dict, tags: dict) -> bool:
     return tags.get("description_hash") == expected_hash
 
 
+def get_metadata_identifier(datablock: dict) -> str | None:
+    """
+    Extrahiert die effektive Lightning Address aus dem
+    text/identifier-Eintrag des LNURLp-Metadatas.
+    """
+    metadata_raw = datablock.get("metadata", "[]")
+    try:
+        entries = json.loads(metadata_raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    for entry in entries:
+        if (
+            isinstance(entry, list)
+            and len(entry) == 2
+            and entry[0] == "text/identifier"
+            and isinstance(entry[1], str)
+            and re.match(r"^[^@]+@[^@]+\.[^@]+$", entry[1])
+        ):
+            return entry[1]
+
+    return None
+
+
 def get_bolt11(lnaddress, amount=None, comment=None):
     try:
-        # ~ purl = get_payurl(lnaddress)
+        lnaddress = normalize_lightning_uri(lnaddress)
         purl = resolve_payurl(lnaddress)
+
         json_content = get_url(path=purl, headers={}).strip()
         datablock = json.loads(json_content)
         description = get_metadata_description(datablock)
@@ -145,16 +186,20 @@ def get_bolt11(lnaddress, amount=None, comment=None):
                 "msg": f"Diese LNURL ist kein Pay-Request (gefundener Typ: '{tag}')",
             }
 
-        if is_lnurl(lnaddress):
-            derived = derive_lnaddress_from_url(purl)
-            if derived:
-                logging.info("Abgeleitete Lightning-Adresse: " + derived)
-                # ~ print(f"ℹ️  Abgeleitete Lightning-Adresse: {derived}")
-            else:
-                logging.info(
-                    "Keine Lightning-Adresse aus LNURL ableitbar (kein LUD-16-Schema)."
-                )
-                # ~ print("ℹ️  Keine Lightning-Adresse aus dieser LNURL ableitbar.")
+        effective_lnaddress = (
+            get_metadata_identifier(datablock)
+            or derive_lnaddress_from_url(datablock.get("callback", ""))
+            or (lnaddress if not is_lnurl(lnaddress) else None)
+        )
+
+        if effective_lnaddress:
+            logging.info("Effektive Lightning-Adresse: " + effective_lnaddress)
+            # ~ print(f"ℹ️  Effektive Lightning-Adresse: {effective_lnaddress}")
+        else:
+            logging.info(
+                "Keine effektive Lightning-Adresse aus LNURL ableitbar (kein LUD-16-Schema)."
+            )
+            # ~ print("ℹ️  Keine Lightning-Adresse aus dieser LNURL ableitbar.")
 
         lnurlpay = datablock["callback"]
         min_amount = int(datablock["minSendable"])
@@ -207,11 +252,23 @@ def get_bolt11(lnaddress, amount=None, comment=None):
         pr_dict = json.loads(ln_res)
 
         if "pr" in pr_dict:
-            return {"status": "ok", "bolt11": pr_dict["pr"]}
+            return {
+                "status": "ok",
+                "bolt11": pr_dict["pr"],
+                "effective_lnaddress": effective_lnaddress,
+            }
         elif "reason" in pr_dict:
-            return {"status": "error", "msg": pr_dict["reason"]}
+            return {
+                "status": "error",
+                "msg": pr_dict["reason"],
+                "effective_lnaddress": effective_lnaddress,
+            }
         else:
-            return {"status": "error", "msg": "Unexpected response format"}
+            return {
+                "status": "error",
+                "msg": "Unexpected response format",
+                "effective_lnaddress": effective_lnaddress,
+            }
 
     except Exception as e:
         logging.error("in get_bolt11: " + str(e))
@@ -225,13 +282,17 @@ def parse_positional_args(argv):
     amount = None
 
     for arg in argv:
-        # Detect email-like LN address (must contain one @ and at least one dot after it)
-        if re.match(r"^[^@]+@[^@]+\.[^@]+$", arg):
-            lnaddress = arg
-        # for LNURL
-        elif is_lnurl(arg):
-            lnaddress = arg
-        # Detect valid integer amount (non-negative)
+        normalized = normalize_lightning_uri(arg)
+
+        # Detect email-like LN address
+        if re.match(r"^[^@]+@[^@]+\.[^@]+$", normalized):
+            lnaddress = normalized
+
+        # Detect LNURL
+        elif is_lnurl(normalized):
+            lnaddress = normalized
+
+        # Detect valid integer amount
         elif arg.isdigit():
             amount = int(arg)
 
@@ -426,7 +487,7 @@ def main():
         args.lnaddress or detected_lnaddress or input("Enter your Lightning Address: ")
     )
 
-    amount = args.amount or detected_amount
+    amount = args.amount if args.amount is not None else detected_amount
     # Prompt for amount only if still missing
     if amount is None:
         while True:

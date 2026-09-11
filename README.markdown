@@ -11,10 +11,7 @@ It's a cool site for using your Lightning Address.
 
 ## TODO
 
-* better error handling for LNURL on GUI
-* handle error msg in status for false lnaddress
-* display desc. length limit for LNURL
-* fix mixed language for app
+* fix mixed language for cli/gui
 * add support for npub alongside LNURL
 * add support for nprofile after npub
 * add multilang support
@@ -22,7 +19,10 @@ It's a cool site for using your Lightning Address.
 ## Usage
 
 You can run the script using Python 3. Make sure you have Python 3 installed on your system.
-For convenience there was added a `shell.nix` and a `pyproject.toml` to manage dependencies.
+For convenience there have been added `flake.nix`, `pyproject.toml` and `requirements.txt`
+to manage dependencies for different systems.
+In case you want to build the application for your environment, this is prepared for NixOS
+and can be adopted for other environments.
 
 ### GUI Usage
 
@@ -56,7 +56,7 @@ Untested territory, feedback welcome.
 ```
 pip install -r requirements.txt
 pip install pyinstaller
-pyinstaller zap.spec
+pyi-makespec --windowed zap.py && pyinstaller zap.spec
 ```
 
 ## License

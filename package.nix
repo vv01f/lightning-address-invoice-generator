@@ -1,8 +1,17 @@
 {
   lib,
-  python3,
-  python3Packages,
+  stdenv,
+  buildPythonApplication,
+  setuptools,
+  wheel,
+  requests,
+  bech32,
+  pyside6,
+  qrcode,
+  pillow,
   makeDesktopItem,
+  librsvg,
+  icnsutil,
 }:
 
 let
@@ -38,61 +47,26 @@ let
     exec = "zap";
     icon = "zap.github.vv01f";
   };
-  
-  pkgs = python3Packages;
-in pkgs.buildPythonApplication rec {
+
+in
+buildPythonApplication rec {
   pname = "zap";
-  version = "0.1.0";
+  version = "0.1.1";
 
   src = ./.;
 
   pyproject = true;
 
-  nativeBuildInputs = with pkgs; [
+  nativeBuildInputs = [
     setuptools
     wheel
+    librsvg
+  ]
+  ++ lib.optionals stdenv.hostPlatform.isDarwin [
+    icnsutil
   ];
 
-  postInstall = let
-    plist = ''
-      <?xml version="1.0" encoding="UTF-8"?>
-      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" 
-      "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-      <plist version="1.0">
-      <dict>
-        <key>CFBundleName</key><string>${macAppAttrs.name}</string>
-        <key>CFBundleDisplayName</key><string>${macAppAttrs.desktopName}</string>
-        <key>CFBundleIdentifier</key><string>com.vv01f.${macAppAttrs.name}</string>
-        <key>CFBundleVersion</key><string>0.1.0</string>
-        <key>CFBundleExecutable</key><string>${macAppAttrs.exec}</string>
-        <key>CFBundleIconFile</key><string>${macAppAttrs.icon}.png</string>
-        <key>LSUIElement</key><false/>
-        <key>CFBundlePackageType</key><string>APPL</string>
-      </dict>
-      </plist>
-    '';
-  in ''
-    case "$(uname -s)" in
-      Linux)
-        mkdir -p $out/share/applications
-        mkdir -p $out/share/icons/hicolor/128x128/apps
-        install -Dm644 ${desktopItem}/share/applications/* $out/share/applications
-        install -Dm644 "./zap.png" "$out/share/icons/hicolor/128x128/apps/zap.github.vv01f.png"
-        ;;
-      Darwin)
-        APPDIR="$out/Zap.app/Contents"
-        mkdir -p $APPDIR/{MacOS,Resources}
-        install -Dm644 ./zap.png $APPDIR/Resources/zap.png
-        install -Dm755 ./zap.py $APPDIR/MacOS/zap
-        echo "${plist}" > $APPDIR/Info.plist
-        #~ cat > $APPDIR/Info.plist <<EOF
-#~ EOF
-        ;;
-      *) echo "Unsupported platform: $(uname -s)" ;;
-    esac
-  '';
-
-  propagatedBuildInputs = with pkgs; [
+  dependencies = [
     requests
     bech32
     pyside6
@@ -100,19 +74,120 @@ in pkgs.buildPythonApplication rec {
     pillow
   ];
 
-  meta = {
-    description = "Lightning Address to BOLT11 invoice generator on CLI with PySide6 GUI.";
-    longDescription = ''
-      This GUI and CLI Tool allows user to derive a BOLT11 Invoice from
-      by passing a Lightning Address and desired parameters for a better
-      UX with Lightning Payments.
+  postInstall =
+    let
+      plist = ''
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN"
+        "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+          <key>CFBundleName</key>
+          <string>${macAppAttrs.name}</string>
+          <key>CFBundleDisplayName</key>
+          <string>${macAppAttrs.desktopName}</string>
+          <key>CFBundleIdentifier</key>
+          <string>com.vv01f.${macAppAttrs.name}</string>
+          <key>CFBundleVersion</key>
+          <string>${version}</string>
+          <key>CFBundleExecutable</key>
+          <string>${macAppAttrs.exec}</string>
+          <key>CFBundleIconFile</key>
+          <string>zap.icns</string>
+          <key>LSUIElement</key>
+          <false/>
+          <key>CFBundlePackageType</key>
+          <string>APPL</string>
+        </dict>
+        </plist>
+      '';
+    in
+    ''
+      ${lib.optionalString stdenv.hostPlatform.isLinux ''
+
+          mkdir -p "$out/share/applications"
+
+          install -Dm644 \
+            ${desktopItem}/share/applications/* \
+            "$out/share/applications/zap.desktop"
+
+          install -Dm644 \
+            ./icons/zap.svg \
+            "$out/share/icons/hicolor/scalable/apps/zap.github.vv01f.svg"
+          
+          for size in 16 32 48 64 128 256; do
+            mkdir -p "$out/share/icons/hicolor/''${size}x''${size}/apps"
+        
+            rsvg-convert \
+              -w "''${size}" \
+              -h "''${size}" \
+              ./icons/zap.svg \
+              -o "$out/share/icons/hicolor/''${size}x''${size}/apps/zap.github.vv01f.png"
+          done
+
+      ''}
+    
+      ${lib.optionalString stdenv.hostPlatform.isDarwin ''
+
+          APPDIR="$out/Zap.app/Contents"
+          mkdir -p "$APPDIR/MacOS"
+          mkdir -p "$APPDIR/Resources"
+          
+          ICONSET="$TMPDIR/zap.iconset"
+          mkdir -p "$ICONSET"
+          
+          for size in 16 32 128 256 512; do
+            rsvg-convert \
+              -w "$size" \
+              -h "$size" \
+              ./icons/zap.svg \
+              -o "$ICONSET/icon_''${size}x''${size}.png"
+          
+            double=$((size * 2))
+          
+            rsvg-convert \
+              -w "$double" \
+              -h "$double" \
+              ./icons/zap.svg \
+              -o "$ICONSET/icon_''${size}x''${size}@2x.png"
+          done
+          
+          icnsutil compose --force "$APPDIR/Resources/zap.icns" \
+            "$ICONSET"/icon_*.png
+          
+          install -Dm755 \
+            "$out/bin/zap" \
+            "$APPDIR/MacOS/zap"
+          
+          cat > "$APPDIR/Info.plist" <<EOF
+          ${plist}
+          EOF
+      ''}
     '';
+
+  meta = {
+    description = "Lightning Address / LNURL to BOLT11 invoice generator on CLI and PySide6 GUI.";
+
+    longDescription = ''
+      This GUI and CLI tool allows users to derive a BOLT11
+      invoice from a Lightning Address or LNURL and desired
+      parameters for a better UX with Lightning Payments.
+
+      After installation, restart your desktop session so that
+      the desktop entry and URI handler become visible.
+    '';
+
     homepage = "https://github.com/vv01f/lightning-address-invoice-generator";
-    source = "https://github.com/vv01f/lightning-address-invoice-generator.git";
-    bugReports = "https://github.com/vv01f/lightning-address-invoice-generator/issues";
+    changelog = null;
     license = lib.licenses.mit;
     mainProgram = "zap";
-    platforms = lib.platforms.linux ++ lib.platforms.darwin; # not tested: windows for lib.platforms.all
-    maintainers = with lib.maintainers; [ "vv01f" ];
+
+    platforms = lib.platforms.linux ++ lib.platforms.darwin;
+
+    maintainers = [
+      {
+        name = "vv01f";
+      }
+    ];
   };
 }

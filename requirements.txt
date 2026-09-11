@@ -1,0 +1,15 @@
+ImageQt
+Optional
+Path
+PilImage
+QApplication
+QRegularExpression
+QRegularExpressionValidator
+annotations
+bech32
+get_bolt11
+get_payurl
+pipreqs
+qrcode
+requests
+stdlib_list
