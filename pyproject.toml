@@ -1,6 +1,6 @@
 [project]
 name = "Zap"
-version = "0.1.1"
+version = "0.1.2"
 description = "Lightning Address / LNURL to BOLT11 invoice generator on CLI and PySide6 GUI."
 authors = [
     { name = "Wolf" }, #, url="https://github.com/vv01f/lightning-address-invoice-generator"
