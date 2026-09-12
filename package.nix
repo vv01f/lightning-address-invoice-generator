@@ -12,7 +12,7 @@
   pillow,
   makeDesktopItem,
   librsvg,
-  icnsutil,
+  icnsutil ? null,
 }:
 
 let
@@ -70,7 +70,7 @@ buildPythonApplication rec {
     wheel
     librsvg
   ]
-  ++ lib.optionals stdenv.hostPlatform.isDarwin [
+  ++ lib.optionals (stdenv.hostPlatform.isDarwin && icnsutil != null) [
     icnsutil
   ];
 
