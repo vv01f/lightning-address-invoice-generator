@@ -21,9 +21,8 @@ let
   githubSrc = fetchFromGitHub {
     owner = "vv01f";
     repo = "lightning-address-invoice-generator";
-    rev = "9abcb8d7cd9635e887b0f755ceebf604575507fc";
-    hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-    #~ hash = "sha256-t98aQh96U9dHZKzOzcg/kQz9Cb4jD/aBSNvV+2IyIHs=";
+    rev = "d33eb137a11a5d4ba34b897775decf7ec9b13303";
+    hash = "sha256-t98aQh96U9dHZKzOzcg/kQz9Cb4jD/aBSNvV+2IyIHs=";
   };
 
   src = if srcOverride != null then srcOverride else githubSrc;
