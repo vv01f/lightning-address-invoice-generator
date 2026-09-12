@@ -34,7 +34,12 @@
           format = {
             type = "app";
             program = "${pkgs.writeShellScript "zap-format" ''
-              exec ${pkgs.ruff}/bin/ruff format .
+              set -e
+
+              git ls-files -z '*.py' |
+                xargs -0 -r ${pkgs.ruff}/bin/ruff format
+              git ls-files -z '*.nix' |
+                xargs -0 -r ${pkgs.nixfmt}/bin/nixfmt
             ''}";
           };
 
@@ -52,7 +57,7 @@
 
           packages = with pkgs; [
             ruff
-            nixfmt-rfc-style
+            nixfmt
             nix-prefetch-github
           ];
 
