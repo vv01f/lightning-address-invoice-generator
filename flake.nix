@@ -22,7 +22,9 @@
 
         python = pkgs.python313;
 
-        zapPkg = python.pkgs.callPackage ./package.nix { };
+        zapPkg = python.pkgs.callPackage ./package.nix {
+            srcOverride = ./.;
+        };
       in
       {
         packages = {

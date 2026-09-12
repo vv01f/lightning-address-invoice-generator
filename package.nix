@@ -14,15 +14,19 @@
   makeDesktopItem,
   librsvg,
   icnsutil ? null,
+  srcOverride ? null,
 }:
 
 let
-  src = fetchFromGitHub {
+  githubSrc = fetchFromGitHub {
     owner = "vv01f";
     repo = "lightning-address-invoice-generator";
-    rev = "6e12eaf2f9b08de8abf9a7ed5227597d2e3b7429";
-    hash = "sha256-x3mcSQNqNMtGL9QTelRh4yCBKsVTi9U4uOo91cKZgcw=";
+    rev = "9abcb8d7cd9635e887b0f755ceebf604575507fc";
+    hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    #~ hash = "sha256-t98aQh96U9dHZKzOzcg/kQz9Cb4jD/aBSNvV+2IyIHs=";
   };
+
+  src = if srcOverride != null then srcOverride else githubSrc;
 
   desktopItem = makeDesktopItem {
     name = "zap";
