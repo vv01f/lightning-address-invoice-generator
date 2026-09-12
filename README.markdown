@@ -12,8 +12,7 @@ It's a cool site for using your Lightning Address.
 ## TODO
 
 * fix mixed language for cli/gui
-* add support for npub alongside LNURL
-* add support for nprofile after npub
+* add support for npub and nprofile alongside LNURL on GUI
 * add multilang support
 
 ## Usage

@@ -10,6 +10,19 @@ from datetime import datetime
 
 import requests
 import bech32
+import websocket
+
+DEFAULT_NOSTR_RELAYS = [
+    "wss://relay.damus.io",
+    "wss://nos.lol",
+    "wss://relay.primal.net",
+]
+
+
+def is_nostr_profile(value: str) -> bool:
+    """Return True for NIP-19 npub or nprofile identifiers."""
+    value = normalize_nostr_uri(value).lower()
+    return value.startswith("npub1") or value.startswith("nprofile1")
 
 
 def is_lnurl(value: str) -> bool:
@@ -19,6 +32,15 @@ def is_lnurl(value: str) -> bool:
     """
     v = normalize_lightning_uri(value)
     return v.lower().startswith("lnurl1")
+
+
+def normalize_nostr_uri(value: str) -> str:
+    value = value.strip()
+
+    if value.lower().startswith("nostr:"):
+        value = value[len("nostr:") :].strip()
+
+    return value
 
 
 def normalize_lightning_uri(value: str) -> str:
@@ -37,6 +59,71 @@ def normalize_lightning_uri(value: str) -> str:
         value = value[len("lightning:") :].strip()
 
     return value
+
+
+def decode_nostr_profile(value: str) -> tuple[str, list[str]]:
+    """
+    Decode a NIP-19 npub or nprofile.
+
+    Returns:
+        (pubkey_hex, relay_urls)
+    """
+    value = normalize_nostr_uri(value)
+
+    hrp, data = _bech32_decode_no_limit(value)
+
+    if hrp not in ("npub", "nprofile") or data is None:
+        raise ValueError(f"Not a valid npub/nprofile: {value}")
+
+    raw = bytes(words_to_bytes(data))
+
+    if hrp == "npub":
+        if len(raw) != 32:
+            raise ValueError("Invalid npub public key length")
+        return raw.hex(), []
+
+    # NIP-19 nprofile TLV
+    pubkey = None
+    relays = []
+
+    i = 0
+
+    while i < len(raw):
+        if i + 2 > len(raw):
+            raise ValueError("Truncated nprofile TLV")
+
+        tlv_type = raw[i]
+        tlv_length = raw[i + 1]
+        i += 2
+
+        if i + tlv_length > len(raw):
+            raise ValueError("Truncated nprofile TLV value")
+
+        value_bytes = raw[i : i + tlv_length]
+        i += tlv_length
+
+        if tlv_type == 0:
+            if len(value_bytes) != 32:
+                raise ValueError("Invalid nprofile public key length")
+
+            pubkey = value_bytes.hex()
+
+        elif tlv_type == 1:
+            try:
+                relay = value_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+
+            if relay.startswith(("wss://", "ws://")):
+                relays.append(relay)
+
+        # Unknown TLV types are deliberately ignored.
+        # NIP-19 requires unsupported TLVs to be ignored.
+
+    if pubkey is None:
+        raise ValueError("nprofile does not contain a public key")
+
+    return pubkey, relays
 
 
 def decode_lnurl(lnurl: str) -> str:
@@ -105,6 +192,150 @@ def resolve_payurl(identifier: str) -> str:
     return get_payurl(identifier)
 
 
+def get_nostr_profile(pubkey: str, relay_urls: list[str]) -> dict:
+    """
+    Retrieve the latest kind:0 profile metadata for a Nostr pubkey.
+    """
+
+    relays = relay_urls or DEFAULT_NOSTR_RELAYS
+
+    subscription_id = "zap-profile"
+
+    request = json.dumps([
+        "REQ",
+        subscription_id,
+        {
+            "kinds": [0],
+            "authors": [pubkey],
+            "limit": 1,
+        },
+    ], separators=(",", ":"))
+
+    best_event = None
+
+    for relay_url in relays:
+        try:
+            ws = websocket.create_connection(
+                relay_url,
+                timeout=5,
+            )
+
+            try:
+                ws.send(request)
+
+                while True:
+                    raw = ws.recv()
+
+                    if not raw:
+                        break
+
+                    message = json.loads(raw)
+
+                    if not isinstance(message, list):
+                        continue
+
+                    if message[0] == "EVENT" and len(message) >= 3:
+                        event = message[2]
+
+                        if (
+                            event.get("kind") == 0
+                            and event.get("pubkey") == pubkey
+                        ):
+                            if (
+                                best_event is None
+                                or event.get("created_at", 0)
+                                > best_event.get("created_at", 0)
+                            ):
+                                best_event = event
+
+                    elif message[0] == "EOSE":
+                        break
+
+            finally:
+                ws.close()
+
+        except Exception as exc:
+            logging.warning(
+                "Nostr relay %s failed: %s",
+                relay_url,
+                exc,
+            )
+
+    if best_event is None:
+        raise ValueError(
+            "Nostr profile could not be found on the configured relays"
+        )
+
+    try:
+        profile = json.loads(best_event.get("content", "{}"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            "Nostr kind:0 profile contains invalid JSON"
+        ) from exc
+
+    if not isinstance(profile, dict):
+        raise ValueError("Nostr profile metadata is not a JSON object")
+
+    return profile
+
+
+def get_profile_lnaddress(profile: dict) -> str | None:
+    """
+    Extract the Lightning Address from Nostr profile metadata.
+    """
+
+    lud16 = profile.get("lud16")
+
+    if isinstance(lud16, str):
+        lud16 = lud16.strip()
+
+        if re.match(r"^[^@]+@[^@]+\.[^@]+$", lud16):
+            return lud16
+
+    # Some profiles/clients use lud06 for an LNURL.
+    lud06 = profile.get("lud06")
+
+    if isinstance(lud06, str):
+        lud06 = lud06.strip()
+
+        if is_lnurl(lud06):
+            return lud06
+
+    return None
+
+
+def resolve_recipient(identifier: str) -> tuple[str, str]:
+    """
+    Resolve a user-entered recipient.
+
+    Returns:
+        (effective_recipient, source_type)
+
+    source_type is one of:
+        "lightning"
+        "nostr"
+    """
+
+    normalized = normalize_lightning_uri(identifier)
+
+    if is_nostr_profile(identifier):
+        pubkey, relay_urls = decode_nostr_profile(identifier)
+
+        profile = get_nostr_profile(pubkey, relay_urls)
+
+        lnaddress = get_profile_lnaddress(profile)
+
+        if not lnaddress:
+            raise ValueError(
+                "Nostr profile does not contain a Lightning Address "
+                "(lud16) or LNURL (lud06)"
+            )
+
+        return lnaddress, "nostr"
+
+    return normalized, "lightning"
+
+
 def get_payurl(lnaddress):
     parts = lnaddress.split("@")
     if len(parts) != 2:
@@ -168,87 +399,161 @@ def get_metadata_identifier(datablock: dict) -> str | None:
 
 def get_bolt11(lnaddress, amount=None, comment=None):
     try:
+        original_recipient = lnaddress
+
+        # Resolve the entered recipient first.
+        #
+        # This may turn:
+        #   npub1...
+        #   nprofile1...
+        #
+        # into a Lightning Address or LNURL obtained from the Nostr profile.
+        #
+        # Normal Lightning Addresses and LNURLs pass through unchanged.
+        lnaddress, source_type = resolve_recipient(lnaddress)
+
+        logging.info(
+            "Resolved recipient %r -> %r (%s)",
+            original_recipient,
+            lnaddress,
+            source_type,
+        )
+
+        # Resolve the Lightning Address or LNURL to its LNURL-pay URL.
         lnaddress = normalize_lightning_uri(lnaddress)
         purl = resolve_payurl(lnaddress)
 
         json_content = get_url(path=purl, headers={}).strip()
         datablock = json.loads(json_content)
+
         description = get_metadata_description(datablock)
+
         logging.info(
-            f"Invoice-Beschreibung (aus metadata): {description!r} (Länge: {len(description)})"
+            f"Invoice-Beschreibung (aus metadata): "
+            f"{description!r} (Länge: {len(description)})"
         )
 
-        # Validierung: sicherstellen, dass es sich um einen Pay-Request handelt
+        # Validate that this is an LNURL-pay request.
         tag = datablock.get("tag")
+
         if tag != "payRequest":
             return {
                 "status": "error",
-                "msg": f"Diese LNURL ist kein Pay-Request (gefundener Typ: '{tag}')",
+                "msg": (
+                    "Diese LNURL ist kein Pay-Request "
+                    f"(gefundener Typ: '{tag}')"
+                ),
             }
 
+        # Determine the effective Lightning Address.
+        #
+        # Prefer:
+        #   1. text/identifier from LNURL metadata
+        #   2. a Lightning Address derived from the callback URL
+        #   3. the resolved input itself, if it is a Lightning Address
+        #
+        # For Nostr recipients, lnaddress has already been replaced by the
+        # Lightning Address or LNURL found in the Nostr profile.
         effective_lnaddress = (
             get_metadata_identifier(datablock)
             or derive_lnaddress_from_url(datablock.get("callback", ""))
-            or (lnaddress if not is_lnurl(lnaddress) else None)
+            or (
+                lnaddress
+                if not is_lnurl(lnaddress)
+                else None
+            )
         )
 
         if effective_lnaddress:
-            logging.info("Effektive Lightning-Adresse: " + effective_lnaddress)
-            # ~ print(f"ℹ️  Effektive Lightning-Adresse: {effective_lnaddress}")
+            logging.info(
+                "Effektive Lightning-Adresse: "
+                + effective_lnaddress
+            )
         else:
             logging.info(
-                "Keine effektive Lightning-Adresse aus LNURL ableitbar (kein LUD-16-Schema)."
+                "Keine effektive Lightning-Adresse aus LNURL ableitbar "
+                "(kein LUD-16-Schema)."
             )
-            # ~ print("ℹ️  Keine Lightning-Adresse aus dieser LNURL ableitbar.")
 
         lnurlpay = datablock["callback"]
         min_amount = int(datablock["minSendable"])
         max_amount = int(datablock["maxSendable"])
         comment_allowed = int(get_comment_length(datablock))
 
-        logging.info("min. amount: " + str(min_amount))
-        logging.info("max. amount: " + str(max_amount))
-        logging.info("comment allowed: " + str(comment_allowed))
+        logging.info(
+            "min. amount: " + str(min_amount)
+        )
+
+        logging.info(
+            "max. amount: " + str(max_amount)
+        )
+
+        logging.info(
+            "comment allowed: " + str(comment_allowed)
+        )
 
         if amount is not None:
             amount_msat = int(amount * 1000)
+
             if amount_msat < min_amount:
                 return {
                     "status": "error",
-                    "msg": f"Amount too small, must be in range {min_amount // 1000} and {max_amount // 1000} sat",
+                    "msg": (
+                        f"Amount too small, must be in range "
+                        f"{min_amount // 1000} and "
+                        f"{max_amount // 1000} sat"
+                    ),
+                    "effective_lnaddress": effective_lnaddress,
                 }
-            elif amount_msat > max_amount:
+
+            if amount_msat > max_amount:
                 return {
                     "status": "error",
-                    "msg": f"Amount too big, must be in range {min_amount // 1000} and {max_amount // 1000} sat",
+                    "msg": (
+                        f"Amount too big, must be in range "
+                        f"{min_amount // 1000} and "
+                        f"{max_amount // 1000} sat"
+                    ),
+                    "effective_lnaddress": effective_lnaddress,
                 }
+
         else:
             amount_msat = None
 
-        logging.info("amount: " + str(amount))
+        logging.info(
+            "amount: " + str(amount)
+        )
 
-        # Start building the query
         query_params = {}
 
-        # Omit amount when None
+        # Only include amount if one was supplied.
         if amount_msat is not None:
             query_params["amount"] = str(amount_msat)
 
-        # If comment is allowed, truncate if necessary and add to query
+        # Add the comment only if the receiver allows comments.
         if comment_allowed > 0 and comment:
             if len(comment) > comment_allowed:
-                logging.info(f"Comment truncated to {comment_allowed} characters")
+                logging.info(
+                    f"Comment truncated to "
+                    f"{comment_allowed} characters"
+                )
+
                 comment = comment[:comment_allowed]
+
             query_params["comment"] = comment
 
-        # Build full query URL
         encoded_query = urllib.parse.urlencode(query_params)
         payquery = f"{lnurlpay}?{encoded_query}"
 
-        logging.info(f"LNURL pay query: {payquery}")
+        logging.info(
+            f"LNURL pay query: {payquery}"
+        )
 
-        # Resolve query URL
-        ln_res = get_url(path=payquery, headers={})
+        ln_res = get_url(
+            path=payquery,
+            headers={},
+        )
+
         pr_dict = json.loads(ln_res)
 
         if "pr" in pr_dict:
@@ -257,24 +562,29 @@ def get_bolt11(lnaddress, amount=None, comment=None):
                 "bolt11": pr_dict["pr"],
                 "effective_lnaddress": effective_lnaddress,
             }
-        elif "reason" in pr_dict:
+
+        if "reason" in pr_dict:
             return {
                 "status": "error",
                 "msg": pr_dict["reason"],
                 "effective_lnaddress": effective_lnaddress,
             }
-        else:
-            return {
-                "status": "error",
-                "msg": "Unexpected response format",
-                "effective_lnaddress": effective_lnaddress,
-            }
+
+        return {
+            "status": "error",
+            "msg": "Unexpected response format",
+            "effective_lnaddress": effective_lnaddress,
+        }
 
     except Exception as e:
-        logging.error("in get_bolt11: " + str(e))
-        return {"status": "error", "msg": str(e)}
-        # ~ logging.error("in get bolt11 : "  + str(e))
-        # ~ return {'status': 'error', 'msg': 'Cannot make a Bolt11, are you sure the address `' + str(lnaddress) + '` is valid and the amount withing the allowed range [' + str(min_amount // 1000) + '; ' + str(max_amount // 1000) + '] Satoshi?'}
+        logging.error(
+            "in get_bolt11: " + str(e)
+        )
+
+        return {
+            "status": "error",
+            "msg": str(e),
+        }
 
 
 def parse_positional_args(argv):
@@ -287,10 +597,12 @@ def parse_positional_args(argv):
         # Detect email-like LN address
         if re.match(r"^[^@]+@[^@]+\.[^@]+$", normalized):
             lnaddress = normalized
-
-        # Detect LNURL
+        
         elif is_lnurl(normalized):
             lnaddress = normalized
+        
+        elif is_nostr_profile(arg):
+            lnaddress = arg
 
         # Detect valid integer amount
         elif arg.isdigit():
@@ -448,7 +760,7 @@ def main():
         "-r",
         "--lnaddress",
         type=str,
-        help="Lightning Address (name@domain.tld) oder LNURL (lnurl1... / lightning:lnurl1...)",
+        help="Lightning Address (name@domain.tld), LNURL (lnurl1... / lightning:lnurl1...), Nostr npub or nprofile",
     )
     parser.add_argument("-a", "--amount", type=int, help="Desired amount (integer)")
     parser.add_argument(

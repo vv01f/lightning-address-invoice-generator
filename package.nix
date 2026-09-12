@@ -10,6 +10,7 @@
   pyside6,
   qrcode,
   pillow,
+  websocket-client,
   makeDesktopItem,
   librsvg,
   icnsutil ? null,
@@ -80,6 +81,7 @@ buildPythonApplication rec {
     pyside6
     qrcode
     pillow
+    websocket-client
   ];
 
   postInstall =
