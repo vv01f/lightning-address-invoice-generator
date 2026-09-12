@@ -13,3 +13,4 @@ pipreqs
 qrcode
 requests
 stdlib_list
+websocket
