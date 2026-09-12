@@ -2,6 +2,7 @@
   lib,
   stdenv,
   buildPythonApplication,
+  fetchFromGitHub,
   setuptools,
   wheel,
   requests,
@@ -15,6 +16,13 @@
 }:
 
 let
+  src = fetchFromGitHub {
+    owner = "vv01f";
+    repo = "lightning-address-invoice-generator";
+    rev = "6e12eaf2f9b08de8abf9a7ed5227597d2e3b7429";
+    hash = "sha256-x3mcSQNqNMtGL9QTelRh4yCBKsVTi9U4uOo91cKZgcw=";
+  };
+
   desktopItem = makeDesktopItem {
     name = "zap";
     exec = "zap %u";
@@ -53,7 +61,7 @@ buildPythonApplication rec {
   pname = "zap";
   version = "0.1.1";
 
-  src = ./.;
+  inherit src;
 
   pyproject = true;
 
@@ -112,53 +120,53 @@ buildPythonApplication rec {
             "$out/share/applications/zap.desktop"
 
           install -Dm644 \
-            ./icons/zap.svg \
+            ${src}/icons/zap.svg \
             "$out/share/icons/hicolor/scalable/apps/zap.github.vv01f.svg"
-          
+
           for size in 16 32 48 64 128 256; do
             mkdir -p "$out/share/icons/hicolor/''${size}x''${size}/apps"
-        
+
             rsvg-convert \
               -w "''${size}" \
               -h "''${size}" \
-              ./icons/zap.svg \
+              ${src}/icons/zap.svg \
               -o "$out/share/icons/hicolor/''${size}x''${size}/apps/zap.github.vv01f.png"
           done
 
       ''}
-    
+
       ${lib.optionalString stdenv.hostPlatform.isDarwin ''
 
           APPDIR="$out/Zap.app/Contents"
           mkdir -p "$APPDIR/MacOS"
           mkdir -p "$APPDIR/Resources"
-          
+
           ICONSET="$TMPDIR/zap.iconset"
           mkdir -p "$ICONSET"
-          
+
           for size in 16 32 128 256 512; do
             rsvg-convert \
               -w "$size" \
               -h "$size" \
-              ./icons/zap.svg \
+              ${src}/icons/zap.svg \
               -o "$ICONSET/icon_''${size}x''${size}.png"
-          
+
             double=$((size * 2))
-          
+
             rsvg-convert \
               -w "$double" \
               -h "$double" \
-              ./icons/zap.svg \
+              ${src}/icons/zap.svg \
               -o "$ICONSET/icon_''${size}x''${size}@2x.png"
           done
-          
+
           icnsutil compose --force "$APPDIR/Resources/zap.icns" \
             "$ICONSET"/icon_*.png
-          
+
           install -Dm755 \
             "$out/bin/zap" \
             "$APPDIR/MacOS/zap"
-          
+
           cat > "$APPDIR/Info.plist" <<EOF
           ${plist}
           EOF
